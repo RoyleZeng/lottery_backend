@@ -12,7 +12,7 @@ echo "此腳本將在數據庫中創建必要的表結構"
 echo
 
 # 檢查遷移文件是否存在
-MIGRATION_FILES=("db_migrations/lottery_tables.sql" "db_migrations/remove_old_tables.sql")
+MIGRATION_FILES=("db_migrations/users_table.sql" "db_migrations/lottery_tables.sql" "db_migrations/remove_old_tables.sql")
 for file in "${MIGRATION_FILES[@]}"; do
     if [ ! -f "$file" ]; then
         echo -e "${RED}錯誤: 遷移文件不存在: $file${NC}"
