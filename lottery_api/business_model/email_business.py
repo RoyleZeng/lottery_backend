@@ -9,6 +9,7 @@ import socket
 from lottery_api.schema.email import EmailConfig, EmailRecipient, EmailContent, SendEmailResponse
 from lottery_api.business_model.lottery_business import LotteryBusiness
 from lottery_api.lib.base_exception import ParameterViolationException
+from lottery_api.utils.email_generator import EmailGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,18 @@ class EmailBusiness:
         message["Subject"] = content.subject
         message["From"] = f"{sender_name} <{sender_email}>" if sender_name else sender_email
         message["To"] = f"{recipient.name} <{recipient.email}>" if recipient.name else recipient.email
+        print('0--------0')
+        print(message["Subject"])
+        print('0--------0')
+
+        print(message["From"])
+        print('0--------0')
+
+        print(message["To"])
+        print('0--------0')
+
+        print(content.body)
+        print('0--------0')
 
         # Add plain text part
         text_part = MIMEText(content.body, "plain", "utf-8")
@@ -99,8 +112,10 @@ class EmailBusiness:
         sent_count = 0
 
         try:
+            print(email_config)
             # Create SMTP connection
             server = EmailBusiness._create_smtp_connection(email_config)
+            print('OK')
 
             for recipient in recipients:
                 try:
@@ -178,20 +193,31 @@ class EmailBusiness:
         # Get event details
         event = await LotteryBusiness.get_lottery_event(conn, event_id)
 
-        # Prepare recipients list (assuming winners have email in their data)
+        # Collect recipients and generate emails from student IDs
         recipients = []
         for prize_group in winners:
             for winner in prize_group["winners"]:
-                # Note: This assumes email is stored in winner data
-                # You may need to modify this based on your actual data structure
-                if "email" in winner and winner["email"]:
+                # Try to get email from winner data first
+                email = winner.get("email")
+                
+                # If no email provided, generate from student_id
+                if not email and winner.get("student_id"):
+                    email = EmailGenerator.generate_email_from_student_id(winner["student_id"])
+                    logger.info(f"Generated email for student {winner['student_id']}: {email}")
+                
+                # Add to recipients if we have a valid email
+                if email:
                     recipients.append(EmailRecipient(
-                        email=winner["email"],
+                        email=email,
                         name=winner.get("name", "")
                     ))
+                    # Update winner data with generated email for template use
+                    winner["email"] = email
+                else:
+                    logger.warning(f"無法為學號 {winner.get('student_id', 'N/A')} 生成有效的 email 地址")
 
         if not recipients:
-            raise ParameterViolationException("中獎者資料中沒有找到有效的電子郵件地址")
+            raise ParameterViolationException("無法為中獎者生成有效的電子郵件地址，請檢查學號格式是否正確")
 
         # Default text template if not provided
         if not email_template:
@@ -297,7 +323,8 @@ class EmailBusiness:
                                 template_vars = {
                                     'winner_name': winner.get("name", "同學"),
                                     'event_name': event["name"],
-                                    'event_date': event["event_date"].strftime("%Y-%m-%d") if event.get("event_date") else "未指定",
+                                    'event_date': event["event_date"].strftime("%Y-%m-%d") if event.get(
+                                        "event_date") else "未指定",
                                     'prize_name': prize_name,
                                     'sender_name': sender_name,
                                     'student_id': winner.get("student_id", "未提供"),
@@ -308,8 +335,10 @@ class EmailBusiness:
                                 }
 
                                 # Replace template variables using double curly braces {{variable}}
-                                personalized_body = EmailBusiness._replace_template_variables(email_template, template_vars)
-                                personalized_html = EmailBusiness._replace_template_variables(html_template, template_vars) if html_template else None
+                                personalized_body = EmailBusiness._replace_template_variables(email_template,
+                                                                                              template_vars)
+                                personalized_html = EmailBusiness._replace_template_variables(html_template,
+                                                                                              template_vars) if html_template else None
 
                                 content = EmailContent(
                                     subject=EmailBusiness._replace_template_variables(subject, template_vars),
@@ -366,13 +395,13 @@ class EmailBusiness:
         """Replace template variables in the format {{variable_name}} with actual values"""
         if not template:
             return template
-            
+
         result = template
         for key, value in variables.items():
             # Replace {{key}} with value
             placeholder = f"{{{{{key}}}}}"
             result = result.replace(placeholder, str(value))
-        
+
         return result
 
     @staticmethod

@@ -85,7 +85,7 @@ async def set_prizes(
 ):
     """Set prizes for a lottery event"""
     result = await LotteryBusiness.set_prizes(conn, event_id, request.prizes)
-    return to_json_response(ListResponse(results=result))
+    return to_json_response(ListResponse(result=result))
 
 
 @router.get("/events/{event_id}/prizes", response_model=SingleResponse[PrizeList],

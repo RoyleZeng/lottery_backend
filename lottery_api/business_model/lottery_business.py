@@ -76,10 +76,11 @@ class LotteryBusiness:
         # Get existing prizes
         existing_prizes = await LotteryDAO.get_prizes(conn, event_id)
         
-        # Delete existing prizes that are not in the new list
-        existing_prize_ids = set(prize['id'] for prize in existing_prizes)
+        # Delete all existing prizes first
+        for existing_prize in existing_prizes:
+            await LotteryDAO.delete_prize(conn, existing_prize['id'])
         
-        # Add new prizes and update existing ones
+        # Create new prizes
         results = []
         for prize_data in prizes_data:
             result = await LotteryDAO.create_prize(

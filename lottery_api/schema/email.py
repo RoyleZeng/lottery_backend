@@ -55,7 +55,6 @@ class SendEmailResponse(BaseModel):
 
 class SendWinnersEmailRequest(BaseModel):
     """Request model for sending winner notification emails"""
-    event_id: str
     email_config: EmailConfig
     sender_name: Optional[str] = "抽獎系統"
     subject: Optional[str] = "恭喜您中獎了！"
