@@ -211,3 +211,4 @@ async def delete_all_participants(
     """Delete all participants for an event. Cannot delete participants from events that have already been drawn."""
     result = await LotteryBusiness.delete_all_participants(conn, event_id)
     return to_json_response(SingleResponse(result=result))
+ 

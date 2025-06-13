@@ -176,3 +176,4 @@ class DeleteAllParticipantsResponse(BaseModel):
     event_id: str
     deleted_participants_count: int
     message: str
+ 

@@ -8,7 +8,8 @@ from starlette.middleware.cors import CORSMiddleware
 from lottery_api.endpoints import register_routers
 
 logger = get_prefix_logger_adapter(__name__)
-app = FastAPI(title="Lottery Backend API", version="1.0.0", openapi_url="/spec/swagger.json", docs_url="/spec/doc")
+app = FastAPI(title="Lottery Backend API", version="1.0.0", openapi_url="/api/spec/swagger.json",
+              docs_url="/api/spec/doc")
 app.add_middleware(CORSMiddleware,
                    allow_origins='*',
                    allow_credentials=True,
