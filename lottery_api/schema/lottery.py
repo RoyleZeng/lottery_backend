@@ -176,4 +176,25 @@ class DeleteAllParticipantsResponse(BaseModel):
     event_id: str
     deleted_participants_count: int
     message: str
+
+
+class ImportedStudent(BaseModel):
+    """Model for successfully imported student"""
+    participant_id: int
+    student_id: str
+    student_name: str
+
+
+class SkippedStudent(BaseModel):
+    """Model for skipped student with reason"""
+    student_id: str
+    reason: str
+
+
+class ImportStudentsResponse(BaseModel):
+    """Response model for student import operation"""
+    imported: List[ImportedStudent]
+    skipped: List[SkippedStudent]
+    total_imported: int
+    total_skipped: int
  

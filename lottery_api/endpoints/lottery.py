@@ -10,7 +10,7 @@ from lottery_api.schema.lottery import (
     StudentImport, StudentsImport, ParticipantList,
     PrizeCreate, PrizeSettings, PrizeList, Prize, PrizeUpdate,
     DrawRequest, WinnersList, ExportWinnersResponse, FinalParticipantList, ResetDrawingResponse,
-    DeleteParticipantResponse, DeleteAllParticipantsResponse
+    DeleteParticipantResponse, DeleteAllParticipantsResponse, ImportStudentsResponse
 )
 
 router = APIRouter(prefix="/lottery", tags=["lottery"])
@@ -49,7 +49,8 @@ async def get_lottery_event(
     return to_json_response(SingleResponse(result=result))
 
 
-@router.post("/events/{event_id}/participants", status_code=status.HTTP_201_CREATED,
+@router.post("/events/{event_id}/participants", response_model=SingleResponse[ImportStudentsResponse], 
+             status_code=status.HTTP_201_CREATED,
              responses={404: {'model': ExceptionResponse}})
 async def import_students_and_add_participants(
         event_id: str,
@@ -60,7 +61,7 @@ async def import_students_and_add_participants(
     result = await LotteryBusiness.import_students_and_add_participants(
         conn, event_id, [student.dict() for student in request.students]
     )
-    return to_json_response(ListResponse(result=result))
+    return to_json_response(SingleResponse(result=result))
 
 
 @router.get("/events/{event_id}/participants", response_model=SingleResponse[ParticipantList],
@@ -120,14 +121,14 @@ async def delete_prize(
     return to_json_response(SingleResponse(result=result))
 
 
-@router.post("/draw/{event_id}", response_model=ListResponse[WinnersList],
+@router.post("/events/{event_id}/draw", response_model=ListResponse[WinnersList],
              responses={
                  404: {'model': ExceptionResponse},
                  400: {'model': ExceptionResponse,
                        'description': 'Bad Request - Event already drawn or other parameter violation'}
              })
 async def draw_winners(
-        event_id=Path(),
+        event_id: str = Path(),
         conn=Depends(get_db_connection)
 ):
     """Draw winners for a lottery event. An event can only be drawn once."""
@@ -161,15 +162,29 @@ async def reset_drawing(
     return to_json_response(SingleResponse(result=result))
 
 
-@router.get("/events/{event_id}/export", response_model=SingleResponse[ExportWinnersResponse],
+@router.get("/events/{event_id}/winners/export",
             responses={404: {'model': ExceptionResponse}})
 async def export_winners(
         event_id: str,
         conn=Depends(get_db_connection)
 ):
-    """Export winners for a lottery event to Excel"""
+    """Export winners for a lottery event to Excel and return the file directly"""
     result = await LotteryBusiness.export_winners(conn, event_id)
-    return to_json_response(SingleResponse(result=result))
+    # Extract filename from the file_url
+    filename = result["file_url"].split("/")[-1]
+    file_path = os.path.join("exports", filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Export file not found"
+        )
+    
+    return FileResponse(
+        file_path, 
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 
 @router.get("/export/{filename}")

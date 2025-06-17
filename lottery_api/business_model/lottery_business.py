@@ -39,19 +39,58 @@ class LotteryBusiness:
 
     @staticmethod
     async def import_students_and_add_participants(conn, event_id, students_data: List[Dict[str, Any]]):
-        """Import students and add them as participants with metadata"""
-        results = []
+        """Import students and add them as participants with metadata from Oracle"""
+        # Get event info to check type
+        event = await LotteryBusiness.get_lottery_event(conn, event_id)
+        
+        # Pre-filter students for final_teaching events
+        filtered_students = []
+        skipped_students = []
+        
         for student_data in students_data:
-            # Add participant with student data as metadata
-            participant = await LotteryDAO.add_participant(conn, event_id, student_data)
+            # For final_teaching events, check valid_surveys
+            if event['type'] == 'final_teaching':
+                valid_surveys = student_data.get('valid_surveys', 'N')
+                if valid_surveys != 'Y':
+                    skipped_students.append({
+                        "student_id": student_data.get('id', ''),
+                        "reason": "valid_surveys is not Y"
+                    })
+                    continue
             
-            results.append({
-                "participant_id": participant['id'],
-                "student_id": student_data.get('id', ''),
-                "student_name": student_data.get('name', '')
-            })
+            filtered_students.append(student_data)
+        
+        # Use batch processing for better performance
+        if filtered_students:
+            result = await LotteryDAO.add_participants_batch(conn, event_id, filtered_students)
             
-        return results
+            # Combine results
+            all_imported = []
+            for participant in result["imported"]:
+                # Find corresponding student data for name
+                student_data = next((s for s in filtered_students if s.get('id') == participant['meta']['student_info']['id']), {})
+                all_imported.append({
+                    "participant_id": participant['id'],
+                    "student_id": participant['meta']['student_info']['id'],
+                    "student_name": student_data.get('name', '')
+                })
+            
+            # Combine skipped students
+            all_skipped = skipped_students + result["skipped"]
+            
+            return {
+                "imported": all_imported,
+                "skipped": all_skipped,
+                "total_imported": len(all_imported),
+                "total_skipped": len(all_skipped)
+            }
+        else:
+            return {
+                "imported": [],
+                "skipped": skipped_students,
+                "total_imported": 0,
+                "total_skipped": len(skipped_students)
+            }
 
     @staticmethod
     async def get_participants(conn, event_id, limit=1000, offset=0):
@@ -236,26 +275,32 @@ class LotteryBusiness:
         # Check if event exists
         event = await LotteryBusiness.get_lottery_event(conn, event_id)
         
-        # Get all winners
-        all_winners = await LotteryDAO.get_winners(conn, event_id)
+        # Get all winners (without privacy masking for export)
+        all_winners = await LotteryDAO.get_winners_for_export(conn, event_id)
         
         if not all_winners:
             raise ParameterViolationException("No winners available for export")
         
-        # Prepare data for Excel
+        # Prepare data for Excel with new format
         excel_data = []
         for i, winner in enumerate(all_winners, 1):
+            # Use Oracle name (Chinese name if available, otherwise English name)
+            display_name = winner.get('chinese_name', '') or winner.get('english_name', '') or winner.get('name', '')
+            # Convert student type to Chinese
+            student_type_text = "外籍生" if winner.get('student_type') == 'Y' else "本國生" if winner.get('student_type') == 'N' else ""
+            
             excel_data.append({
                 "序號": i,
-                "獎項名稱": winner['prize_name'],
+                "獎項": winner['prize_name'],
                 "系所": winner.get('department', ''),
                 "年級": winner.get('grade', ''),
-                "姓名": winner.get('name', ''),
-                "學號": winner.get('student_id', ''),
-                "必修問卷數": winner.get('required_surveys', ''),
-                "已完成問卷數": winner.get('completed_surveys', ''),
-                "問卷完成狀態": "是" if winner.get('surveys_completed') else "否",
-                "有效問卷狀態": "是" if winner.get('valid_surveys') else "否",
+                "姓名": display_name,
+                "學號": winner.get('oracle_student_id', '') or winner.get('student_id', ''),
+                "身份證字號": winner.get('id_number', ''),
+                "戶籍地址": winner.get('address', ''),
+                "身份別": student_type_text,
+                "手機": winner.get('phone', ''),
+                "電子郵件": winner.get('email', '')
             })
         
         # Create DataFrame and export to Excel
@@ -264,14 +309,13 @@ class LotteryBusiness:
         # Create directory if it doesn't exist
         os.makedirs("exports", exist_ok=True)
         
-        # Generate filename
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        filename = f"exports/lottery_winners_{event_id}_{timestamp}.xlsx"
+        # Generate filename - use a consistent format for easy access
+        filename = f"exports/中獎名單_{event_id}.xlsx"
         
-        # Export to Excel
-        df.to_excel(filename, index=False)
+        # Export to Excel with proper encoding
+        df.to_excel(filename, index=False, engine='openpyxl')
         
-        return {"file_url": f"/api/lottery/export/{os.path.basename(filename)}"}
+        return {"file_url": f"/api/lottery/export/中獎名單_{event_id}.xlsx"}
 
     @staticmethod
     async def delete_participant(conn, participant_id):

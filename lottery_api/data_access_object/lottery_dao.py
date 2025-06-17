@@ -1,4 +1,5 @@
-from lottery_api.data_access_object.db import Database
+from lottery_api.data_access_object.db import Database, OracleDatabase
+from lottery_api.utils.privacy_protection import apply_privacy_mask
 import uuid
 import json
 
@@ -74,15 +75,25 @@ class LotteryDAO:
 
     @staticmethod
     async def add_participant(conn, event_id, participant_data):
-        """Add a participant to a lottery event with metadata"""
-        # Prepare meta data
+        """Add a participant to a lottery event with metadata from Oracle"""
+        student_id = participant_data.get('id', '')
+        
+        # Get student info from Oracle database
+        oracle_student_info = OracleDatabase.get_student_info(student_id)
+        
+        if not oracle_student_info:
+            # If student not found in Oracle, skip this participant
+            return None
+        
+        # Prepare meta data with Oracle info
         meta = {
             "student_info": {
                 "id": participant_data.get('id', ''),
                 "department": participant_data.get('department', ''),
                 "name": participant_data.get('name', ''),
                 "grade": participant_data.get('grade', '')
-            }
+            },
+            "oracle_info": oracle_student_info
         }
         
         # Add teaching comments if available
@@ -102,9 +113,83 @@ class LotteryDAO:
         result = await Database.fetchrow(conn, query, event_id, json.dumps(meta))
         if result:
             # Parse meta field
-            result = dict(result)
             result['meta'] = LotteryDAO._parse_meta(result['meta'])
         return result
+
+    @staticmethod
+    async def add_participants_batch(conn, event_id, participants_data):
+        """Batch add participants to a lottery event with Oracle metadata lookup"""
+        # Extract all student IDs for batch Oracle lookup
+        student_ids = [p.get('id', '') for p in participants_data if p.get('id')]
+        
+        # Get all student info from Oracle in one batch
+        oracle_students = OracleDatabase.get_students_batch(student_ids)
+        
+        # Prepare batch insert data
+        batch_data = []
+        skipped_students = []
+        
+        for participant_data in participants_data:
+            student_id = participant_data.get('id', '')
+            oracle_student_info = oracle_students.get(student_id)
+            
+            if not oracle_student_info:
+                # If student not found in Oracle, skip this participant
+                skipped_students.append({
+                    "student_id": student_id,
+                    "reason": "Student not found in Oracle database"
+                })
+                continue
+            
+            # Prepare meta data with Oracle info
+            meta = {
+                "student_info": {
+                    "id": participant_data.get('id', ''),
+                    "department": participant_data.get('department', ''),
+                    "name": participant_data.get('name', ''),
+                    "grade": participant_data.get('grade', '')
+                },
+                "oracle_info": oracle_student_info
+            }
+            
+            # Add teaching comments if available
+            if any(key in participant_data for key in ['required_surveys', 'completed_surveys', 'surveys_completed', 'valid_surveys']):
+                meta["teaching_comments"] = {
+                    "required_surveys": participant_data.get('required_surveys', 0),
+                    "completed_surveys": participant_data.get('completed_surveys', 0),
+                    "surveys_completed": participant_data.get('surveys_completed', False),
+                    "valid_surveys": participant_data.get('valid_surveys', False)
+                }
+            
+            batch_data.append((event_id, json.dumps(meta)))
+        
+        # Batch insert into database
+        if batch_data:
+            query = """
+            INSERT INTO lottery_participants (event_id, meta)
+            VALUES ($1, $2)
+            RETURNING id, event_id, meta, created_at
+            """
+            results = []
+            for event_id_val, meta_json in batch_data:
+                result = await Database.fetchrow(conn, query, event_id_val, meta_json)
+                if result:
+                    result['meta'] = LotteryDAO._parse_meta(result['meta'])
+                    results.append(result)
+            
+            return {
+                "imported": results,
+                "skipped": skipped_students,
+                "total_imported": len(results),
+                "total_skipped": len(skipped_students)
+            }
+        else:
+            return {
+                "imported": [],
+                "skipped": skipped_students,
+                "total_imported": 0,
+                "total_skipped": len(skipped_students)
+            }
 
     @staticmethod
     async def get_participants(conn, event_id, limit=1000, offset=0):
@@ -124,6 +209,15 @@ class LotteryDAO:
             meta = LotteryDAO._parse_meta(row['meta'])
             student_info = meta.get('student_info', {})
             teaching_comments = meta.get('teaching_comments', {})
+            oracle_info = meta.get('oracle_info', {})
+            
+            # Prioritize Oracle name data over student_info name
+            display_name = (
+                oracle_info.get('name') or 
+                oracle_info.get('chinese_name') or 
+                oracle_info.get('english_name') or 
+                student_info.get('name', '')
+            )
             
             participant = {
                 'id': row['id'],
@@ -131,13 +225,19 @@ class LotteryDAO:
                 'created_at': row['created_at'],
                 'student_id': student_info.get('id', ''),
                 'department': student_info.get('department', ''),
-                'name': student_info.get('name', ''),
+                'name': display_name,
                 'grade': student_info.get('grade', ''),
                 'required_surveys': teaching_comments.get('required_surveys'),
                 'completed_surveys': teaching_comments.get('completed_surveys'),
                 'surveys_completed': teaching_comments.get('surveys_completed'),
-                'valid_surveys': teaching_comments.get('valid_surveys')
+                'valid_surveys': teaching_comments.get('valid_surveys'),
+                # Oracle data - only include necessary fields for frontend
+                'oracle_student_id': oracle_info.get('student_id', ''),
+                'chinese_name': oracle_info.get('chinese_name', ''),
+                'english_name': oracle_info.get('english_name', ''),
             }
+            # 應用個資遮罩
+            participant = apply_privacy_mask(participant)
             participants.append(participant)
         
         return participants
@@ -234,6 +334,15 @@ class LotteryDAO:
             meta = LotteryDAO._parse_meta(row['meta'])
             student_info = meta.get('student_info', {})
             teaching_comments = meta.get('teaching_comments', {})
+            oracle_info = meta.get('oracle_info', {})
+            
+            # Prioritize Oracle name data over student_info name
+            display_name = (
+                oracle_info.get('name') or 
+                oracle_info.get('chinese_name') or 
+                oracle_info.get('english_name') or 
+                student_info.get('name', '')
+            )
             
             winner = {
                 'id': row['id'],
@@ -244,13 +353,80 @@ class LotteryDAO:
                 'prize_name': row['prize_name'],
                 'student_id': student_info.get('id', ''),
                 'department': student_info.get('department', ''),
-                'name': student_info.get('name', ''),
+                'name': display_name,
                 'grade': student_info.get('grade', ''),
                 'required_surveys': teaching_comments.get('required_surveys'),
                 'completed_surveys': teaching_comments.get('completed_surveys'),
                 'surveys_completed': teaching_comments.get('surveys_completed'),
-                'valid_surveys': teaching_comments.get('valid_surveys')
+                'valid_surveys': teaching_comments.get('valid_surveys'),
+                # Oracle data - only include necessary fields for frontend
+                'oracle_student_id': oracle_info.get('student_id', ''),
+                'chinese_name': oracle_info.get('chinese_name', ''),
+                'english_name': oracle_info.get('english_name', ''),
             }
+            # 應用個資遮罩
+            winner = apply_privacy_mask(winner)
+            winners.append(winner)
+        
+        return winners
+
+    @staticmethod
+    async def get_winners_for_export(conn, event_id):
+        """Get winners for export (without privacy masking)"""
+        query = """
+        SELECT w.id, w.event_id, w.prize_id, w.participant_id, w.created_at,
+               pr.name as prize_name, p.meta
+        FROM lottery_winners w
+        JOIN lottery_prizes pr ON w.prize_id = pr.id
+        JOIN lottery_participants p ON w.participant_id = p.id
+        WHERE w.event_id = $1
+        ORDER BY pr.id, w.id
+        """
+        rows = await Database.fetch(conn, query, event_id)
+        
+        # Transform the data to flatten meta information (without privacy masking)
+        winners = []
+        for row in rows:
+            meta = LotteryDAO._parse_meta(row['meta'])
+            student_info = meta.get('student_info', {})
+            teaching_comments = meta.get('teaching_comments', {})
+            oracle_info = meta.get('oracle_info', {})
+            
+            # Prioritize Oracle name data over student_info name
+            display_name = (
+                oracle_info.get('name') or 
+                oracle_info.get('chinese_name') or 
+                oracle_info.get('english_name') or 
+                student_info.get('name', '')
+            )
+            
+            winner = {
+                'id': row['id'],
+                'event_id': row['event_id'],
+                'prize_id': row['prize_id'],
+                'participant_id': row['participant_id'],
+                'created_at': row['created_at'],
+                'prize_name': row['prize_name'],
+                'student_id': student_info.get('id', ''),
+                'department': student_info.get('department', ''),
+                'name': display_name,
+                'grade': student_info.get('grade', ''),
+                'required_surveys': teaching_comments.get('required_surveys'),
+                'completed_surveys': teaching_comments.get('completed_surveys'),
+                'surveys_completed': teaching_comments.get('surveys_completed'),
+                'valid_surveys': teaching_comments.get('valid_surveys'),
+                # Oracle data
+                'oracle_student_id': oracle_info.get('student_id', ''),
+                'id_number': oracle_info.get('id_number', ''),
+                'chinese_name': oracle_info.get('chinese_name', ''),
+                'english_name': oracle_info.get('english_name', ''),
+                'phone': oracle_info.get('phone', ''),
+                'postal_code': oracle_info.get('postal_code', ''),
+                'address': oracle_info.get('address', ''),
+                'student_type': oracle_info.get('student_type', ''),
+                'email': oracle_info.get('email', '')
+            }
+            # 不應用個資遮罩 - 用於 Excel 匯出
             winners.append(winner)
         
         return winners
@@ -272,6 +448,15 @@ class LotteryDAO:
             meta = LotteryDAO._parse_meta(row['meta'])
             student_info = meta.get('student_info', {})
             teaching_comments = meta.get('teaching_comments', {})
+            oracle_info = meta.get('oracle_info', {})
+            
+            # Prioritize Oracle name data over student_info name
+            display_name = (
+                oracle_info.get('name') or 
+                oracle_info.get('chinese_name') or 
+                oracle_info.get('english_name') or 
+                student_info.get('name', '')
+            )
             
             participant = {
                 'participant_id': row['participant_id'],
@@ -279,13 +464,19 @@ class LotteryDAO:
                 'created_at': row['created_at'],
                 'student_id': student_info.get('id', ''),
                 'department': student_info.get('department', ''),
-                'name': student_info.get('name', ''),
+                'name': display_name,
                 'grade': student_info.get('grade', ''),
                 'required_surveys': teaching_comments.get('required_surveys'),
                 'completed_surveys': teaching_comments.get('completed_surveys'),
                 'surveys_completed': teaching_comments.get('surveys_completed'),
-                'valid_surveys': teaching_comments.get('valid_surveys')
+                'valid_surveys': teaching_comments.get('valid_surveys'),
+                # Oracle data - only include necessary fields for frontend
+                'oracle_student_id': oracle_info.get('student_id', ''),
+                'chinese_name': oracle_info.get('chinese_name', ''),
+                'english_name': oracle_info.get('english_name', ''),
             }
+            # 應用個資遮罩
+            participant = apply_privacy_mask(participant)
             participants.append(participant)
         
         return participants

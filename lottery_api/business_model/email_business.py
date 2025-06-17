@@ -76,18 +76,6 @@ class EmailBusiness:
         message["Subject"] = content.subject
         message["From"] = f"{sender_name} <{sender_email}>" if sender_name else sender_email
         message["To"] = f"{recipient.name} <{recipient.email}>" if recipient.name else recipient.email
-        print('0--------0')
-        print(message["Subject"])
-        print('0--------0')
-
-        print(message["From"])
-        print('0--------0')
-
-        print(message["To"])
-        print('0--------0')
-
-        print(content.body)
-        print('0--------0')
 
         # Add plain text part
         text_part = MIMEText(content.body, "plain", "utf-8")
@@ -193,28 +181,31 @@ class EmailBusiness:
         # Get event details
         event = await LotteryBusiness.get_lottery_event(conn, event_id)
 
-        # Collect recipients and generate emails from student IDs
+        # Collect recipients using Oracle email data
         recipients = []
         for prize_group in winners:
             for winner in prize_group["winners"]:
-                # Try to get email from winner data first
+                # Use email from Oracle data (already stored in meta)
                 email = winner.get("email")
                 
-                # If no email provided, generate from student_id
+                # If no Oracle email, fallback to generated email
                 if not email and winner.get("student_id"):
                     email = EmailGenerator.generate_email_from_student_id(winner["student_id"])
-                    logger.info(f"Generated email for student {winner['student_id']}: {email}")
+                    logger.info(f"Generated fallback email for student {winner['student_id']}: {email}")
                 
                 # Add to recipients if we have a valid email
                 if email:
+                    # Use Oracle name (Chinese name preferred, then English name, then original name)
+                    display_name = winner.get('chinese_name', '') or winner.get('english_name', '') or winner.get("name", "")
                     recipients.append(EmailRecipient(
                         email=email,
-                        name=winner.get("name", "")
+                        name=display_name
                     ))
-                    # Update winner data with generated email for template use
+                    # Update winner data with email for template use
                     winner["email"] = email
+                    winner["display_name"] = display_name
                 else:
-                    logger.warning(f"無法為學號 {winner.get('student_id', 'N/A')} 生成有效的 email 地址")
+                    logger.warning(f"無法為學號 {winner.get('student_id', 'N/A')} 獲取有效的 email 地址")
 
         if not recipients:
             raise ParameterViolationException("無法為中獎者生成有效的電子郵件地址，請檢查學號格式是否正確")
@@ -319,19 +310,22 @@ class EmailBusiness:
                     for winner in prize_group["winners"]:
                         if "email" in winner and winner["email"]:
                             try:
-                                # Prepare template variables
+                                # Prepare template variables with Oracle data
                                 template_vars = {
-                                    'winner_name': winner.get("name", "同學"),
+                                    'winner_name': winner.get("display_name", "同學"),
                                     'event_name': event["name"],
                                     'event_date': event["event_date"].strftime("%Y-%m-%d") if event.get(
                                         "event_date") else "未指定",
                                     'prize_name': prize_name,
                                     'sender_name': sender_name,
-                                    'student_id': winner.get("student_id", "未提供"),
+                                    'student_id': winner.get("oracle_student_id", "") or winner.get("student_id", "未提供"),
                                     'department': winner.get("department", "未提供"),
                                     'grade': winner.get("grade", "未提供"),
                                     'phone': winner.get("phone", "未提供"),
                                     'email': winner.get("email", ""),
+                                    'id_number': winner.get("id_number", "未提供"),
+                                    'address': winner.get("address", "未提供"),
+                                    'student_type': "外籍生" if winner.get('student_type') == 'Y' else "本國生" if winner.get('student_type') == 'N' else "未提供"
                                 }
 
                                 # Replace template variables using double curly braces {{variable}}

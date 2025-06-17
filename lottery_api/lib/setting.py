@@ -15,6 +15,12 @@ default_environment_parameter = EnvironmentParameter()
 
 
 class EnvironmentSettings(BaseSettings):
+    # Oracle Database settings
+    oracle_host: str = "140.120.3.90"
+    oracle_port: int = 1521
+    oracle_service_name: str = "nchu"
+    oracle_username: str = "studlottery"
+    oracle_password: str = "Lottery2025"
 
     class Config:
         env_file = f'config.{default_environment_parameter.stage}.env'
