@@ -6,7 +6,7 @@ from lottery_api.business_model.email_business import EmailBusiness
 from lottery_api.lib.response import ExceptionResponse, SingleResponse, to_json_response
 from lottery_api.schema.email import (
     SendEmailRequest, SendEmailResponse, BulkEmailRequest,
-    SendWinnersEmailRequest, EmailConfig
+    SendWinnersEmailRequest, EmailConfig, TestWinnersEmailRequest
 )
 
 router = APIRouter(prefix="/email", tags=["email"])
@@ -227,4 +227,28 @@ async def get_smtp_settings_example():
             "note": "請聯絡您的郵件服務提供商取得正確設定"
         }
     }
-    return to_json_response(SingleResponse(result=examples)) 
+    return to_json_response(SingleResponse(result=examples))
+
+
+@router.post("/test-winners/{event_id}", response_model=SingleResponse[SendEmailResponse],
+             responses={
+                 404: {'model': ExceptionResponse},
+                 400: {'model': ExceptionResponse}
+             })
+async def test_winners_notification(
+    event_id: str,
+    request: TestWinnersEmailRequest,
+    conn=Depends(get_db_connection)
+):
+    """測試中獎通知郵件功能 - 發送給指定的測試收件人而非實際中獎者"""
+    result = await EmailBusiness.test_winners_notification(
+        conn=conn,
+        event_id=event_id,
+        email_config=request.email_config,
+        test_recipients=request.test_recipients,
+        sender_name=request.sender_name,
+        subject=request.subject,
+        email_template=request.email_template,
+        html_template=request.html_template
+    )
+    return to_json_response(SingleResponse(result=result)) 

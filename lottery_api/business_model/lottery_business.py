@@ -367,4 +367,34 @@ class LotteryBusiness:
             "event_id": event_id,
             "deleted_participants_count": len(deleted_participants),
             "message": f"Successfully deleted {len(deleted_participants)} participants"
-        } 
+        }
+
+    @staticmethod
+    async def soft_delete_event(conn, event_id):
+        """Soft delete a lottery event"""
+        # Check if event exists and is not already deleted
+        event = await LotteryDAO.get_lottery_event_by_id(conn, event_id)
+        if not event:
+            raise ResourceNotFoundException(f"Lottery event with ID {event_id} not found or already deleted")
+        
+        # Perform soft delete
+        result = await LotteryDAO.soft_delete_event(conn, event_id)
+        if not result:
+            raise ResourceNotFoundException(f"Failed to delete lottery event with ID {event_id}")
+        
+        return result
+
+    @staticmethod
+    async def restore_event(conn, event_id):
+        """Restore a soft deleted lottery event"""
+        # Check if event exists in deleted state
+        result = await LotteryDAO.restore_event(conn, event_id)
+        if not result:
+            raise ResourceNotFoundException(f"Deleted lottery event with ID {event_id} not found")
+        
+        return result
+
+    @staticmethod
+    async def get_deleted_events(conn, limit=100, offset=0):
+        """Get all soft deleted lottery events with pagination"""
+        return await LotteryDAO.get_deleted_events(conn, limit, offset) 

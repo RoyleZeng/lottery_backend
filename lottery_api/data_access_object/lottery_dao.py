@@ -25,9 +25,9 @@ class LotteryDAO:
         """Create a new lottery event"""
         event_id = str(uuid.uuid4())
         query = """
-        INSERT INTO lottery_events (id, academic_year_term, name, description, event_date, type, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, academic_year_term, name, description, event_date, type, status, created_at
+        INSERT INTO lottery_events (id, academic_year_term, name, description, event_date, type, status, is_deleted)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE)
+        RETURNING id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
         """
         return await Database.fetchrow(conn, query, event_id, academic_year_term, name, description, event_date, type, status)
 
@@ -37,27 +37,28 @@ class LotteryDAO:
         query = """
         UPDATE lottery_events
         SET status = $2
-        WHERE id = $1
-        RETURNING id, academic_year_term, name, description, event_date, status, created_at
+        WHERE id = $1 AND is_deleted = FALSE
+        RETURNING id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
         """
         return await Database.fetchrow(conn, query, event_id, status)
 
     @staticmethod
     async def get_lottery_events(conn, limit=100, offset=0, event_type=None):
-        """Get all lottery events with pagination"""
+        """Get all lottery events with pagination (excluding soft deleted)"""
         if event_type:
             query = """
-            SELECT id, academic_year_term, name, description, event_date, type, status, created_at
+            SELECT id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
             FROM lottery_events
-            WHERE type = $3
+            WHERE type = $3 AND is_deleted = FALSE
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
             """
             return await Database.fetch(conn, query, limit, offset, event_type)
         else:
             query = """
-            SELECT id, academic_year_term, name, description, event_date, type, status, created_at
+            SELECT id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
             FROM lottery_events
+            WHERE is_deleted = FALSE
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
             """
@@ -65,11 +66,11 @@ class LotteryDAO:
 
     @staticmethod
     async def get_lottery_event_by_id(conn, event_id):
-        """Get a lottery event by ID"""
+        """Get a lottery event by ID (excluding soft deleted)"""
         query = """
-        SELECT id, academic_year_term, name, description, event_date, type, status, created_at
+        SELECT id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
         FROM lottery_events
-        WHERE id = $1
+        WHERE id = $1 AND is_deleted = FALSE
         """
         return await Database.fetchrow(conn, query, event_id)
 
@@ -509,4 +510,38 @@ class LotteryDAO:
         WHERE event_id = $1
         RETURNING id
         """
-        return await Database.fetch(conn, query, event_id) 
+        return await Database.fetch(conn, query, event_id)
+
+    @staticmethod
+    async def soft_delete_event(conn, event_id):
+        """Soft delete a lottery event by setting is_deleted to TRUE"""
+        query = """
+        UPDATE lottery_events
+        SET is_deleted = TRUE
+        WHERE id = $1 AND is_deleted = FALSE
+        RETURNING id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
+        """
+        return await Database.fetchrow(conn, query, event_id)
+
+    @staticmethod
+    async def restore_event(conn, event_id):
+        """Restore a soft deleted lottery event by setting is_deleted to FALSE"""
+        query = """
+        UPDATE lottery_events
+        SET is_deleted = FALSE
+        WHERE id = $1 AND is_deleted = TRUE
+        RETURNING id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
+        """
+        return await Database.fetchrow(conn, query, event_id)
+
+    @staticmethod
+    async def get_deleted_events(conn, limit=100, offset=0):
+        """Get all soft deleted lottery events with pagination"""
+        query = """
+        SELECT id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
+        FROM lottery_events
+        WHERE is_deleted = TRUE
+        ORDER BY created_at DESC
+        LIMIT $1 OFFSET $2
+        """
+        return await Database.fetch(conn, query, limit, offset) 

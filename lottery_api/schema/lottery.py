@@ -25,6 +25,7 @@ class LotteryEventCreate(LotteryEventBase):
 class LotteryEvent(LotteryEventBase):
     id: str
     status: str
+    is_deleted: bool = False
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -197,4 +198,13 @@ class ImportStudentsResponse(BaseModel):
     skipped: List[SkippedStudent]
     total_imported: int
     total_skipped: int
+
+
+class SoftDeleteEventResponse(BaseModel):
+    """Response model for soft delete event operation"""
+    event_id: str
+    message: str
+    is_deleted: bool
+
+    model_config = ConfigDict(from_attributes=True)
  

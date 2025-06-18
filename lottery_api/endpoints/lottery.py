@@ -10,7 +10,8 @@ from lottery_api.schema.lottery import (
     StudentImport, StudentsImport, ParticipantList,
     PrizeCreate, PrizeSettings, PrizeList, Prize, PrizeUpdate,
     DrawRequest, WinnersList, ExportWinnersResponse, FinalParticipantList, ResetDrawingResponse,
-    DeleteParticipantResponse, DeleteAllParticipantsResponse, ImportStudentsResponse
+    DeleteParticipantResponse, DeleteAllParticipantsResponse, ImportStudentsResponse,
+    SoftDeleteEventResponse
 )
 
 router = APIRouter(prefix="/lottery", tags=["lottery"])
@@ -26,6 +27,9 @@ async def create_lottery_event(
     return to_json_response(SingleResponse(result=result))
 
 
+
+
+
 @router.get("/events", response_model=ListResponse[LotteryEvent])
 async def get_lottery_events(
         limit: int = Query(100, ge=1, le=1000),
@@ -36,6 +40,9 @@ async def get_lottery_events(
     """Get all lottery events with pagination"""
     result = await LotteryBusiness.get_lottery_events(conn, limit, offset, event_type.value if event_type else None)
     return to_json_response(ListResponse(result=result))
+
+
+
 
 
 @router.get("/events/{event_id}", response_model=SingleResponse[LotteryEvent],
@@ -226,4 +233,45 @@ async def delete_all_participants(
     """Delete all participants for an event. Cannot delete participants from events that have already been drawn."""
     result = await LotteryBusiness.delete_all_participants(conn, event_id)
     return to_json_response(SingleResponse(result=result))
+
+
+@router.delete("/events/{event_id}", response_model=SingleResponse[SoftDeleteEventResponse],
+               responses={404: {'model': ExceptionResponse}})
+async def soft_delete_event(
+        event_id: str = Path(),
+        conn=Depends(get_db_connection)
+):
+    """軟刪除抽獎活動（設置 is_deleted 為 true，不會真正從資料庫刪除）"""
+    result = await LotteryBusiness.soft_delete_event(conn, event_id)
+    return to_json_response(SingleResponse(result={
+        "event_id": result["id"],
+        "message": f"抽獎活動「{result['name']}」已被軟刪除",
+        "is_deleted": result["is_deleted"]
+    }))
+
+
+@router.put("/events/{event_id}/restore", response_model=SingleResponse[SoftDeleteEventResponse],
+           responses={404: {'model': ExceptionResponse}})
+async def restore_event(
+        event_id: str = Path(),
+        conn=Depends(get_db_connection)
+):
+    """恢復被軟刪除的抽獎活動"""
+    result = await LotteryBusiness.restore_event(conn, event_id)
+    return to_json_response(SingleResponse(result={
+        "event_id": result["id"],
+        "message": f"抽獎活動「{result['name']}」已恢復",
+        "is_deleted": result["is_deleted"]
+    }))
+
+
+@router.get("/deleted-events", response_model=ListResponse[LotteryEvent])
+async def get_deleted_events(
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+        conn=Depends(get_db_connection)
+):
+    """取得所有被軟刪除的抽獎活動"""
+    result = await LotteryBusiness.get_deleted_events(conn, limit, offset)
+    return to_json_response(ListResponse(result=result))
  

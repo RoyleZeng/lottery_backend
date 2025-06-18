@@ -69,4 +69,14 @@ class BulkEmailRequest(BaseModel):
     subject: str
     body: str
     html_body: Optional[str] = None
-    recipient_emails: List[EmailStr] 
+    recipient_emails: List[EmailStr]
+
+
+class TestWinnersEmailRequest(BaseModel):
+    """Request model for testing winner notification emails"""
+    email_config: EmailConfig
+    sender_name: Optional[str] = "抽獎系統"
+    subject: Optional[str] = "恭喜您中獎了！"
+    email_template: Optional[str] = None
+    html_template: Optional[str] = None
+    test_recipients: List[EmailStr] = Field(..., description="測試收件人郵件清單") 

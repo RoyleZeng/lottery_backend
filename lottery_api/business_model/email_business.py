@@ -72,10 +72,23 @@ class EmailBusiness:
             content: EmailContent
     ) -> MIMEMultipart:
         """Create email message"""
+        from email.header import Header
+        from email.utils import formataddr
+        
         message = MIMEMultipart("alternative")
         message["Subject"] = content.subject
-        message["From"] = f"{sender_name} <{sender_email}>" if sender_name else sender_email
-        message["To"] = f"{recipient.name} <{recipient.email}>" if recipient.name else recipient.email
+        
+        # Properly format From header with UTF-8 encoding
+        if sender_name:
+            message["From"] = formataddr((sender_name, sender_email))
+        else:
+            message["From"] = sender_email
+            
+        # Properly format To header with UTF-8 encoding
+        if recipient.name:
+            message["To"] = formataddr((recipient.name, recipient.email))
+        else:
+            message["To"] = recipient.email
 
         # Add plain text part
         text_part = MIMEText(content.body, "plain", "utf-8")
@@ -413,3 +426,204 @@ class EmailBusiness:
                 "success": False,
                 "message": f"郵件伺服器連接測試失敗: {str(e)}"
             }
+
+    @staticmethod
+    async def test_winners_notification(
+            conn,
+            event_id: str,
+            email_config: EmailConfig,
+            test_recipients: List[str],
+            sender_name: str = "抽獎系統",
+            subject: str = "恭喜您中獎了！",
+            email_template: str = None,
+            html_template: str = None
+    ) -> Optional[SendEmailResponse]:
+        """Test winner notification emails by sending to specified test recipients instead of actual winners"""
+        # Get winners for the event (for template data)
+        winners = await LotteryBusiness.get_winners(conn, event_id)
+
+        if not winners:
+            raise ParameterViolationException("此抽獎活動沒有中獎者，無法進行測試")
+
+        # Get event details
+        event = await LotteryBusiness.get_lottery_event(conn, event_id)
+
+        # Default text template if not provided
+        if not email_template:
+            email_template = """親愛的 {{winner_name}}，
+
+恭喜您在「{{event_name}}」抽獎活動中獲得「{{prize_name}}」！
+
+活動詳情：
+- 活動名稱：{{event_name}}
+- 活動日期：{{event_date}}
+- 獲得獎項：{{prize_name}}
+- 中獎者姓名：{{winner_name}}
+- 學號：{{student_id}}
+- 系所：{{department}}
+- 年級：{{grade}}
+
+請依照相關規定領取您的獎品。
+
+祝您
+身體健康，學業進步！
+
+{{sender_name}}
+
+【這是測試郵件，實際中獎者為其他人】"""
+
+        # Default HTML template if not provided
+        if not html_template:
+            html_template = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>中獎通知測試</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #f8f9fa; padding: 20px; text-align: center; border-radius: 8px; }
+        .content { padding: 20px 0; }
+        .prize-info { background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .winner-info { background-color: #f0f8ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .test-notice { background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 5px solid #ffc107; }
+        .footer { text-align: center; color: #666; font-size: 14px; margin-top: 30px; }
+        .highlight { color: #d63384; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎉 中獎通知測試 🎉</h1>
+        </div>
+        
+        <div class="test-notice">
+            <h3>⚠️ 測試通知</h3>
+            <p><strong>這是測試郵件，實際中獎者為其他人</strong></p>
+        </div>
+        
+        <div class="content">
+            <p>親愛的 <strong>{{winner_name}}</strong>，</p>
+            
+            <p>恭喜您在「<span class="highlight">{{event_name}}</span>」抽獎活動中獲得獎項！</p>
+            
+            <div class="prize-info">
+                <h3>🏆 獲得獎項</h3>
+                <p><strong>{{prize_name}}</strong></p>
+            </div>
+            
+            <div class="winner-info">
+                <h3>👤 中獎者資訊</h3>
+                <ul>
+                    <li><strong>姓名：</strong>{{winner_name}}</li>
+                    <li><strong>學號：</strong>{{student_id}}</li>
+                    <li><strong>系所：</strong>{{department}}</li>
+                    <li><strong>年級：</strong>{{grade}}</li>
+                </ul>
+            </div>
+            
+            <div class="prize-info">
+                <h3>📅 活動資訊</h3>
+                <ul>
+                    <li><strong>活動名稱：</strong>{{event_name}}</li>
+                    <li><strong>活動日期：</strong>{{event_date}}</li>
+                </ul>
+            </div>
+            
+            <p>請依照相關規定領取您的獎品。</p>
+            
+            <p>祝您<br>
+            身體健康，學業進步！</p>
+        </div>
+        
+        <div class="footer">
+            <p>{{sender_name}}</p>
+            <p style="color: #dc3545; font-weight: bold;">【這是測試郵件，實際中獎者為其他人】</p>
+        </div>
+    </div>
+</body>
+</html>"""
+
+        # Prepare test recipients
+        test_email_recipients = [EmailRecipient(email=email, name="測試收件人") for email in test_recipients]
+
+        # Send test emails using first winner's data as template
+        failed_recipients = []
+        sent_count = 0
+
+        # Use first winner from first prize group as sample data
+        sample_winner = None
+        sample_prize_name = "測試獎項"
+        
+        if winners and len(winners) > 0 and len(winners[0]["winners"]) > 0:
+            sample_winner = winners[0]["winners"][0]
+            sample_prize_name = winners[0]["prize_name"]
+
+        try:
+            server = EmailBusiness._create_smtp_connection(email_config)
+
+            try:
+                for recipient in test_email_recipients:
+                    try:
+                        # Prepare template variables with sample winner data
+                        template_vars = {
+                            'winner_name': sample_winner.get("name", "測試同學") if sample_winner else "測試同學",
+                            'event_name': event["name"],
+                            'event_date': event["event_date"].strftime("%Y-%m-%d") if event.get("event_date") else "未指定",
+                            'prize_name': sample_prize_name,
+                            'sender_name': sender_name,
+                            'student_id': sample_winner.get("oracle_student_id", "TEST001") if sample_winner else "TEST001",
+                            'department': sample_winner.get("department", "測試系所") if sample_winner else "測試系所",
+                            'grade': sample_winner.get("grade", "測試年級") if sample_winner else "測試年級",
+                            'phone': sample_winner.get("phone", "未提供") if sample_winner else "未提供",
+                            'email': recipient.email,
+                        }
+
+                        # Replace template variables using double curly braces {{variable}}
+                        personalized_body = EmailBusiness._replace_template_variables(email_template, template_vars)
+                        personalized_html = EmailBusiness._replace_template_variables(html_template, template_vars) if html_template else None
+
+                        content = EmailContent(
+                            subject=EmailBusiness._replace_template_variables(subject, template_vars),
+                            body=personalized_body,
+                            html_body=personalized_html
+                        )
+
+                        message = EmailBusiness._create_email_message(
+                            email_config.username,
+                            sender_name,
+                            recipient,
+                            content
+                        )
+
+                        server.send_message(message)
+                        sent_count += 1
+                        logger.info(f"Test winner notification sent to {recipient.email}")
+
+                    except Exception as e:
+                        logger.error(f"Failed to send test winner notification to {recipient.email}: {str(e)}")
+                        failed_recipients.append(recipient.email)
+
+            finally:
+                server.quit()
+
+        except Exception as e:
+            logger.error(f"SMTP connection error: {str(e)}")
+            return SendEmailResponse(
+                success=False,
+                message=f"郵件伺服器連接失敗: {str(e)}",
+                sent_count=0,
+                failed_recipients=test_recipients
+            )
+
+        success = sent_count > 0
+        message = f"測試郵件發送完成：成功發送 {sent_count} 封測試郵件"
+        if failed_recipients:
+            message += f"，{len(failed_recipients)} 封發送失敗"
+
+        return SendEmailResponse(
+            success=success,
+            message=message,
+            sent_count=sent_count,
+            failed_recipients=failed_recipients if failed_recipients else None
+        )
