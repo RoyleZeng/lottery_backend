@@ -9,16 +9,28 @@ class LotteryDAO:
 
     @staticmethod
     def _parse_meta(meta_value):
-        """Parse meta field from database"""
+        """Parse meta field from JSON string to dict"""
         if isinstance(meta_value, str):
             try:
                 return json.loads(meta_value)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError:
                 return {}
         elif isinstance(meta_value, dict):
             return meta_value
         else:
             return {}
+
+    @staticmethod
+    def _is_oracle_available():
+        """Check if Oracle database is available for connections"""
+        try:
+            # Try to get a connection to test availability
+            conn = OracleDatabase.get_connection()
+            conn.close()
+            return True
+        except Exception:
+            # Oracle is not available (connection error, timeout, etc.)
+            return False
 
     @staticmethod
     async def create_lottery_event(conn, academic_year_term, name, description, event_date, type="general", status="pending"):
@@ -79,23 +91,31 @@ class LotteryDAO:
         """Add a participant to a lottery event with metadata from Oracle"""
         student_id = participant_data.get('id', '')
         
-        # Get student info from Oracle database
-        oracle_student_info = OracleDatabase.get_student_info(student_id)
+        # Check if Oracle is available
+        oracle_available = LotteryDAO._is_oracle_available()
+        oracle_student_info = None
         
-        if not oracle_student_info:
-            # If student not found in Oracle, skip this participant
-            return None
+        if oracle_available:
+            # Get student info from Oracle database
+            oracle_student_info = OracleDatabase.get_student_info(student_id)
+            
+            if not oracle_student_info:
+                # If student not found in Oracle, skip this participant
+                return None
         
-        # Prepare meta data with Oracle info
+        # Prepare meta data (with or without Oracle info)
         meta = {
             "student_info": {
                 "id": participant_data.get('id', ''),
                 "department": participant_data.get('department', ''),
                 "name": participant_data.get('name', ''),
                 "grade": participant_data.get('grade', '')
-            },
-            "oracle_info": oracle_student_info
+            }
         }
+        
+        # Add Oracle info if available
+        if oracle_student_info:
+            meta["oracle_info"] = oracle_student_info
         
         # Add teaching comments if available
         if any(key in participant_data for key in ['required_surveys', 'completed_surveys', 'surveys_completed', 'valid_surveys']):
@@ -120,11 +140,16 @@ class LotteryDAO:
     @staticmethod
     async def add_participants_batch(conn, event_id, participants_data):
         """Batch add participants to a lottery event with Oracle metadata lookup"""
+        # Check if Oracle is available
+        oracle_available = LotteryDAO._is_oracle_available()
+        oracle_students = {}
+        
         # Extract all student IDs for batch Oracle lookup
         student_ids = [p.get('id', '') for p in participants_data if p.get('id')]
         
-        # Get all student info from Oracle in one batch
-        oracle_students = OracleDatabase.get_students_batch(student_ids)
+        if oracle_available:
+            # Get all student info from Oracle in one batch
+            oracle_students = OracleDatabase.get_students_batch(student_ids)
         
         # Prepare batch insert data
         batch_data = []
@@ -132,26 +157,29 @@ class LotteryDAO:
         
         for participant_data in participants_data:
             student_id = participant_data.get('id', '')
-            oracle_student_info = oracle_students.get(student_id)
+            oracle_student_info = oracle_students.get(student_id) if oracle_available else None
             
-            if not oracle_student_info:
-                # If student not found in Oracle, skip this participant
+            # If Oracle is available but student not found, skip this participant
+            if oracle_available and not oracle_student_info:
                 skipped_students.append({
                     "student_id": student_id,
                     "reason": "Student not found in Oracle database"
                 })
                 continue
             
-            # Prepare meta data with Oracle info
+            # Prepare meta data (with or without Oracle info)
             meta = {
                 "student_info": {
                     "id": participant_data.get('id', ''),
                     "department": participant_data.get('department', ''),
                     "name": participant_data.get('name', ''),
                     "grade": participant_data.get('grade', '')
-                },
-                "oracle_info": oracle_student_info
+                }
             }
+            
+            # Add Oracle info if available
+            if oracle_student_info:
+                meta["oracle_info"] = oracle_student_info
             
             # Add teaching comments if available
             if any(key in participant_data for key in ['required_surveys', 'completed_surveys', 'surveys_completed', 'valid_surveys']):
