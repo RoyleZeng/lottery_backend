@@ -184,6 +184,9 @@ migrate_database() {
 test_deployment() {
     log_info "測試部署..."
     
+    # 設置 Oracle 環境變數
+    setup_oracle_env
+    
     # 激活虛擬環境
     source .venv/bin/activate
     
@@ -222,9 +225,29 @@ test_deployment() {
     log_success "所有測試通過"
 }
 
+# 設置 Oracle 環境變數
+setup_oracle_env() {
+    log_info "設置 Oracle 環境變數..."
+    
+    # 檢查 Oracle Instant Client 是否存在
+    if [ -d "$HOME/instantclient_23_4" ]; then
+        export LD_LIBRARY_PATH="$HOME/instantclient_23_4:$LD_LIBRARY_PATH"
+        export ORACLE_HOME="$HOME/instantclient_23_4"
+        log_success "Oracle 環境變數已設置"
+        log_info "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+        log_info "ORACLE_HOME=$ORACLE_HOME"
+    else
+        log_warning "Oracle Instant Client 目錄不存在: $HOME/instantclient_23_4"
+        log_warning "如果需要 Oracle 連接，請確保 Instant Client 已正確安裝"
+    fi
+}
+
 # 啟動生產服務
 start_service() {
     log_info "啟動生產服務..."
+    
+    # 設置 Oracle 環境變數
+    setup_oracle_env
     
     # 嘗試啟動 systemd 服務
     if systemctl list-unit-files | grep -q lottery-backend; then
@@ -239,12 +262,20 @@ start_service() {
         if ! command -v screen >/dev/null 2>&1; then
             log_warning "screen 未安裝，直接在後台啟動服務"
             source .venv/bin/activate
+            # 使用你建議的命令格式啟動服務，包含 Oracle 環境變數
+            export LD_LIBRARY_PATH="$HOME/instantclient_23_4:$LD_LIBRARY_PATH"
+            export ORACLE_HOME="$HOME/instantclient_23_4"
             nohup python -m lottery_api.main > lottery_backend.log 2>&1 &
             echo $! > lottery_backend.pid
             log_success "服務已在後台啟動，PID: $(cat lottery_backend.pid)"
         else
-            # 使用 screen 啟動
-            screen -dmS lottery-backend bash -c "source .venv/bin/activate && python -m lottery_api.main"
+            # 使用 screen 啟動，包含 Oracle 環境變數
+            screen -dmS lottery-backend bash -c "
+                export LD_LIBRARY_PATH='$HOME/instantclient_23_4:\$LD_LIBRARY_PATH'
+                export ORACLE_HOME='$HOME/instantclient_23_4'
+                source .venv/bin/activate
+                python -m lottery_api.main
+            "
             log_success "服務已在 screen 中啟動"
             log_info "使用 'screen -r lottery-backend' 查看服務狀態"
         fi

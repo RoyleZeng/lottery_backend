@@ -138,10 +138,11 @@ class LotteryDAO:
         return result
 
     @staticmethod
-    async def add_participants_batch(conn, event_id, participants_data):
+    async def add_participants_batch(conn, event_id, participants_data, event_type="general"):
         """Batch add participants to a lottery event with Oracle metadata lookup"""
-        # Check if Oracle is available
-        oracle_available = LotteryDAO._is_oracle_available()
+        # Check if Oracle is available and needed
+        # For final_teaching events, skip Oracle lookup as frontend provides complete data
+        oracle_available = LotteryDAO._is_oracle_available() and event_type != "final_teaching"
         oracle_students = {}
         
         # Extract all student IDs for batch Oracle lookup
@@ -160,6 +161,7 @@ class LotteryDAO:
             oracle_student_info = oracle_students.get(student_id) if oracle_available else None
             
             # If Oracle is available but student not found, skip this participant
+            # This only applies to general events, not final_teaching
             if oracle_available and not oracle_student_info:
                 skipped_students.append({
                     "student_id": student_id,
@@ -177,17 +179,41 @@ class LotteryDAO:
                 }
             }
             
-            # Add Oracle info if available
+            # Add Oracle info if available (for general events)
             if oracle_student_info:
                 meta["oracle_info"] = oracle_student_info
             
+            # For final_teaching events, add frontend-provided complete data
+            if event_type == "final_teaching":
+                # Handle enum values for student_type
+                student_type_value = participant_data.get('student_type')
+                if hasattr(student_type_value, 'value'):  # It's an enum
+                    student_type_stored = student_type_value.value
+                else:
+                    student_type_stored = student_type_value
+                
+                meta["final_teaching_info"] = {
+                    "id_number": participant_data.get('id_number', ''),
+                    "address": participant_data.get('address', ''),
+                    "student_type": student_type_stored,
+                    "phone": participant_data.get('phone', ''),
+                    "email": participant_data.get('email', '')
+                }
+            
             # Add teaching comments if available
             if any(key in participant_data for key in ['required_surveys', 'completed_surveys', 'surveys_completed', 'valid_surveys']):
+                # Handle enum values for valid_surveys
+                valid_surveys_value = participant_data.get('valid_surveys')
+                if hasattr(valid_surveys_value, 'value'):  # It's an enum
+                    valid_surveys_stored = valid_surveys_value.value
+                else:
+                    valid_surveys_stored = valid_surveys_value
+                
                 meta["teaching_comments"] = {
                     "required_surveys": participant_data.get('required_surveys', 0),
                     "completed_surveys": participant_data.get('completed_surveys', 0),
                     "surveys_completed": participant_data.get('surveys_completed', False),
-                    "valid_surveys": participant_data.get('valid_surveys', False)
+                    "valid_surveys": valid_surveys_stored
                 }
             
             batch_data.append((event_id, json.dumps(meta)))
@@ -239,6 +265,7 @@ class LotteryDAO:
             student_info = meta.get('student_info', {})
             teaching_comments = meta.get('teaching_comments', {})
             oracle_info = meta.get('oracle_info', {})
+            final_teaching_info = meta.get('final_teaching_info', {})
             
             # Prioritize Oracle name data over student_info name
             display_name = (
@@ -260,10 +287,16 @@ class LotteryDAO:
                 'completed_surveys': teaching_comments.get('completed_surveys'),
                 'surveys_completed': teaching_comments.get('surveys_completed'),
                 'valid_surveys': teaching_comments.get('valid_surveys'),
-                # Oracle data - only include necessary fields for frontend
+                # Oracle data - only include necessary fields for frontend (with privacy masking)
                 'oracle_student_id': oracle_info.get('student_id', ''),
                 'chinese_name': oracle_info.get('chinese_name', ''),
                 'english_name': oracle_info.get('english_name', ''),
+                # Final teaching complete data - only for final_teaching events
+                'id_number': final_teaching_info.get('id_number', ''),
+                'address': final_teaching_info.get('address', ''),
+                'student_type': final_teaching_info.get('student_type', ''),
+                'phone': final_teaching_info.get('phone', ''),
+                'email': final_teaching_info.get('email', ''),
             }
             # 應用個資遮罩
             participant = apply_privacy_mask(participant)
@@ -420,6 +453,7 @@ class LotteryDAO:
             student_info = meta.get('student_info', {})
             teaching_comments = meta.get('teaching_comments', {})
             oracle_info = meta.get('oracle_info', {})
+            final_teaching_info = meta.get('final_teaching_info', {})
             
             # Prioritize Oracle name data over student_info name
             display_name = (
@@ -444,16 +478,16 @@ class LotteryDAO:
                 'completed_surveys': teaching_comments.get('completed_surveys'),
                 'surveys_completed': teaching_comments.get('surveys_completed'),
                 'valid_surveys': teaching_comments.get('valid_surveys'),
-                # Oracle data
+                # Oracle data (for general events)
                 'oracle_student_id': oracle_info.get('student_id', ''),
-                'id_number': oracle_info.get('id_number', ''),
+                'id_number': oracle_info.get('id_number', '') or final_teaching_info.get('id_number', ''),
                 'chinese_name': oracle_info.get('chinese_name', ''),
                 'english_name': oracle_info.get('english_name', ''),
-                'phone': oracle_info.get('phone', ''),
+                'phone': oracle_info.get('phone', '') or final_teaching_info.get('phone', ''),
                 'postal_code': oracle_info.get('postal_code', ''),
-                'address': oracle_info.get('address', ''),
-                'student_type': oracle_info.get('student_type', ''),
-                'email': oracle_info.get('email', '')
+                'address': oracle_info.get('address', '') or final_teaching_info.get('address', ''),
+                'student_type': oracle_info.get('student_type', '') or final_teaching_info.get('student_type', ''),
+                'email': oracle_info.get('email', '') or final_teaching_info.get('email', '')
             }
             # 不應用個資遮罩 - 用於 Excel 匯出
             winners.append(winner)

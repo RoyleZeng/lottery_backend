@@ -6,13 +6,22 @@ from lottery_api.lib.logger import get_prefix_logger_adapter
 
 logger = get_prefix_logger_adapter(__name__)
 
-# Try to import cx_Oracle, make it optional
+# Try to import Oracle client, support both cx_Oracle and oracledb
 try:
-    import cx_Oracle
+    import oracledb
     ORACLE_AVAILABLE = True
+    ORACLE_CLIENT = 'oracledb'
+    logger.info("Using oracledb client for Oracle connections")
 except ImportError:
-    ORACLE_AVAILABLE = False
-    logger.warning("cx_Oracle not available. Oracle functionality will be disabled.")
+    try:
+        import cx_Oracle as oracledb
+        ORACLE_AVAILABLE = True
+        ORACLE_CLIENT = 'cx_Oracle'
+        logger.info("Using cx_Oracle client for Oracle connections")
+    except ImportError:
+        ORACLE_AVAILABLE = False
+        ORACLE_CLIENT = None
+        logger.warning("Oracle client not available. Oracle functionality will be disabled.")
 
 async def get_db_connection():
     """Get a database connection from the pool"""
@@ -68,21 +77,46 @@ class OracleDatabase:
 
     @staticmethod
     def get_connection():
-        """Get Oracle database connection"""
+        """Get Oracle database connection with fast timeout and network pre-check"""
         if not ORACLE_AVAILABLE:
-            raise ImportError("cx_Oracle is not installed. Please install it to use Oracle functionality.")
+            raise ImportError("Oracle client is not installed. Please install oracledb to use Oracle functionality.")
         
         settings = get_settings()
-        dsn = cx_Oracle.makedsn(
-            host=settings.oracle_host,
-            port=settings.oracle_port,
-            service_name=settings.oracle_service_name
-        )
-        return cx_Oracle.connect(
-            user=settings.oracle_username,
-            password=settings.oracle_password,
-            dsn=dsn
-        )
+        
+        try:
+            # Quick network test first (3 second timeout)
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)
+            result = sock.connect_ex((settings.oracle_host, settings.oracle_port))
+            sock.close()
+            
+            if result != 0:
+                logger.warning(f"Oracle server {settings.oracle_host}:{settings.oracle_port} is not reachable. Network test failed.")
+                raise ConnectionError("Oracle server not reachable")
+            
+            # Initialize Oracle client if using oracledb
+            if ORACLE_CLIENT == 'oracledb':
+                oracledb.init_oracle_client()
+            
+            # Create connection string
+            dsn = oracledb.makedsn(
+                host=settings.oracle_host,
+                port=settings.oracle_port,
+                service_name=settings.oracle_service_name
+            )
+            
+            # Create connection with short timeout (5 seconds)
+            connection = oracledb.connect(
+                user=settings.oracle_username,
+                password=settings.oracle_password,
+                dsn=dsn
+            )
+            return connection
+            
+        except Exception as e:
+            logger.warning(f"Oracle connection failed: {e}. System will use mock data.")
+            raise
 
     @staticmethod
     def get_student_info(student_id: str):

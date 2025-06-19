@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, status, File, UploadFile, Query, HTTPException, Path
 from fastapi.responses import FileResponse
 from lottery_api.data_access_object.db import get_db_connection
@@ -7,7 +7,7 @@ from lottery_api.business_model.lottery_business import LotteryBusiness
 from lottery_api.lib.response import ExceptionResponse, SingleResponse, ListResponse, to_json_response
 from lottery_api.schema.lottery import (
     LotteryEventCreate, LotteryEvent, LotteryEventType,
-    StudentImport, StudentsImport, ParticipantList,
+    StudentImport, StudentsImport, FinalTeachingStudentsImport, ParticipantList,
     PrizeCreate, PrizeSettings, PrizeList, Prize, PrizeUpdate,
     DrawRequest, WinnersList, ExportWinnersResponse, FinalParticipantList, ResetDrawingResponse,
     DeleteParticipantResponse, DeleteAllParticipantsResponse, ImportStudentsResponse,
@@ -27,9 +27,6 @@ async def create_lottery_event(
     return to_json_response(SingleResponse(result=result))
 
 
-
-
-
 @router.get("/events", response_model=ListResponse[LotteryEvent])
 async def get_lottery_events(
         limit: int = Query(100, ge=1, le=1000),
@@ -40,9 +37,6 @@ async def get_lottery_events(
     """Get all lottery events with pagination"""
     result = await LotteryBusiness.get_lottery_events(conn, limit, offset, event_type.value if event_type else None)
     return to_json_response(ListResponse(result=result))
-
-
-
 
 
 @router.get("/events/{event_id}", response_model=SingleResponse[LotteryEvent],
@@ -61,10 +55,14 @@ async def get_lottery_event(
              responses={404: {'model': ExceptionResponse}})
 async def import_students_and_add_participants(
         event_id: str,
-        request: StudentsImport,
+        request: Union[StudentsImport, FinalTeachingStudentsImport],
         conn=Depends(get_db_connection)
 ):
-    """Import students and add them as participants to a lottery event"""
+    """Import students and add them as participants to a lottery event.
+    
+    For general events: Use StudentsImport format - Oracle database will be queried for additional student info.
+    For final_teaching events: Use FinalTeachingStudentsImport format - Complete student info should be provided.
+    """
     result = await LotteryBusiness.import_students_and_add_participants(
         conn, event_id, [student.dict() for student in request.students]
     )

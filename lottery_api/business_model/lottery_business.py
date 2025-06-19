@@ -6,6 +6,7 @@ from typing import Dict, List, Any
 
 from lottery_api.data_access_object.lottery_dao import LotteryDAO
 from lottery_api.lib.base_exception import ResourceNotFoundException, ParameterViolationException
+from lottery_api.schema.lottery import ValidSurveys, StudentType
 
 
 class LotteryBusiness:
@@ -50,8 +51,14 @@ class LotteryBusiness:
         for student_data in students_data:
             # For final_teaching events, check valid_surveys
             if event['type'] == 'final_teaching':
-                valid_surveys = student_data.get('valid_surveys', 'N')
-                if valid_surveys != 'Y':
+                valid_surveys = student_data.get('valid_surveys')
+                # Handle both enum and string values
+                if isinstance(valid_surveys, ValidSurveys):
+                    valid_surveys_value = valid_surveys.value
+                else:
+                    valid_surveys_value = valid_surveys
+                
+                if valid_surveys_value != ValidSurveys.YES.value:
                     skipped_students.append({
                         "student_id": student_data.get('id', ''),
                         "reason": "valid_surveys is not Y"
@@ -62,7 +69,7 @@ class LotteryBusiness:
         
         # Use batch processing for better performance
         if filtered_students:
-            result = await LotteryDAO.add_participants_batch(conn, event_id, filtered_students)
+            result = await LotteryDAO.add_participants_batch(conn, event_id, filtered_students, event['type'])
             
             # Combine results
             all_imported = []
@@ -287,7 +294,13 @@ class LotteryBusiness:
             # Use Oracle name (Chinese name if available, otherwise English name)
             display_name = winner.get('chinese_name', '') or winner.get('english_name', '') or winner.get('name', '')
             # Convert student type to Chinese
-            student_type_text = "外籍生" if winner.get('student_type') == 'Y' else "本國生" if winner.get('student_type') == 'N' else ""
+            student_type_value = winner.get('student_type')
+            if student_type_value == StudentType.FOREIGN.value or student_type_value == 'Y':
+                student_type_text = "外籍生"
+            elif student_type_value == StudentType.DOMESTIC.value or student_type_value == 'N':
+                student_type_text = "本國生"
+            else:
+                student_type_text = ""
             
             excel_data.append({
                 "序號": i,

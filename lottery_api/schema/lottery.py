@@ -10,6 +10,18 @@ class LotteryEventType(str, Enum):
     FINAL_TEACHING = "final_teaching"
 
 
+class ValidSurveys(str, Enum):
+    """Enum for valid surveys status"""
+    YES = "Y"  # 有效問卷
+    NO = "N"   # 無效問卷
+
+
+class StudentType(str, Enum):
+    """Enum for student type (corresponds to Oracle STUD_EXTRA)"""
+    FOREIGN = "Y"  # 外籍生
+    DOMESTIC = "N"  # 本國生
+
+
 class LotteryEventBase(BaseModel):
     academic_year_term: str
     name: str
@@ -44,7 +56,17 @@ class TeachingCommentBase(BaseModel):
     required_surveys: Optional[int] = None
     completed_surveys: Optional[int] = None
     surveys_completed: Optional[bool] = None
-    valid_surveys: Optional[bool] = None
+    valid_surveys: Optional[ValidSurveys] = None  # Y=有效問卷, N=無效問卷
+
+
+class FinalTeachingStudentImport(StudentBase, TeachingCommentBase):
+    """Model for importing final_teaching students with complete information"""
+    # 新增的完整個人資訊欄位
+    id_number: Optional[str] = None  # 身份證字號
+    address: Optional[str] = None    # 戶籍地址
+    student_type: Optional[StudentType] = None  # 身份別：Y=外籍生, N=本國生
+    phone: Optional[str] = None      # 手機
+    email: Optional[str] = None      # 電子郵件
 
 
 class StudentImport(StudentBase, TeachingCommentBase):
@@ -57,10 +79,16 @@ class StudentsImport(BaseModel):
     students: List[StudentImport]
 
 
+class FinalTeachingStudentsImport(BaseModel):
+    """Batch import multiple final_teaching students with complete information"""
+    students: List[FinalTeachingStudentImport]
+
+
 class ParticipantBase(BaseModel):
     """Base model for participants with student data"""
     student_id: str
     event_id: str
+
 
 class Participant(ParticipantBase):
     # Participant fields
@@ -69,6 +97,16 @@ class Participant(ParticipantBase):
     name: Optional[str] = None
     grade: Optional[str] = None
     created_at: datetime
+    # Oracle fields (for general events, with privacy masking)
+    oracle_student_id: Optional[str] = None
+    chinese_name: Optional[str] = None
+    english_name: Optional[str] = None
+    # Final teaching complete data fields (for final_teaching events)
+    id_number: Optional[str] = None
+    address: Optional[str] = None
+    student_type: Optional[StudentType] = None  # Y=外籍生, N=本國生
+    phone: Optional[str] = None
+    email: Optional[str] = None
 
 
 class FinalParticipant(Participant):
@@ -77,7 +115,7 @@ class FinalParticipant(Participant):
     required_surveys: Optional[int] = None
     completed_surveys: Optional[int] = None
     surveys_completed: Optional[bool] = None
-    valid_surveys: Optional[bool] = None
+    valid_surveys: Optional[ValidSurveys] = None  # Y=有效問卷, N=無效問卷
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -85,6 +123,7 @@ class FinalParticipant(Participant):
 class ParticipantList(BaseModel):
     total: int
     participants: List[Participant]
+
 
 class FinalParticipantList(BaseModel):
     total: int
@@ -137,7 +176,7 @@ class Winner(BaseModel):
     required_surveys: Optional[int] = None
     completed_surveys: Optional[int] = None
     surveys_completed: Optional[bool] = None
-    valid_surveys: Optional[bool] = None
+    valid_surveys: Optional[ValidSurveys] = None  # Y=有效問卷, N=無效問卷
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -158,6 +197,7 @@ class DrawRequest(BaseModel):
 
 class ExportWinnersResponse(BaseModel):
     file_url: str
+
 
 class ResetDrawingResponse(BaseModel):
     event_id: str
