@@ -39,6 +39,36 @@ class LotteryBusiness:
         return event
 
     @staticmethod
+    async def update_lottery_event(conn, event_id, event_data):
+        """Update a lottery event"""
+        # First check if event exists
+        existing_event = await LotteryBusiness.get_lottery_event(conn, event_id)
+        
+        # Check if event has been drawn (prevent modification of drawn events)
+        if existing_event['status'] == 'drawn':
+            raise ParameterViolationException("Cannot update a lottery event that has already been drawn")
+        
+        # Prepare update data, converting enum to value if needed
+        update_data = {}
+        if event_data.academic_year_term is not None:
+            update_data['academic_year_term'] = event_data.academic_year_term
+        if event_data.name is not None:
+            update_data['name'] = event_data.name
+        if event_data.description is not None:
+            update_data['description'] = event_data.description
+        if event_data.event_date is not None:
+            update_data['event_date'] = event_data.event_date
+        if event_data.type is not None:
+            update_data['type'] = event_data.type.value
+        
+        # Perform update
+        result = await LotteryDAO.update_lottery_event(conn, event_id, **update_data)
+        if not result:
+            raise ResourceNotFoundException(f"Lottery event with ID {event_id} not found or no changes made")
+        
+        return result
+
+    @staticmethod
     async def import_students_and_add_participants(conn, event_id, students_data: List[Dict[str, Any]]):
         """Import students and add them as participants with metadata from Oracle"""
         # Get event info to check type

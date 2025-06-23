@@ -6,7 +6,7 @@ from lottery_api.data_access_object.db import get_db_connection
 from lottery_api.business_model.lottery_business import LotteryBusiness
 from lottery_api.lib.response import ExceptionResponse, SingleResponse, ListResponse, to_json_response
 from lottery_api.schema.lottery import (
-    LotteryEventCreate, LotteryEvent, LotteryEventType,
+    LotteryEventCreate, LotteryEvent, LotteryEventType, LotteryEventUpdate,
     StudentImport, StudentsImport, FinalTeachingStudentsImport, ParticipantList,
     PrizeCreate, PrizeSettings, PrizeList, Prize, PrizeUpdate,
     DrawRequest, WinnersList, ExportWinnersResponse, FinalParticipantList, ResetDrawingResponse,
@@ -47,6 +47,21 @@ async def get_lottery_event(
 ):
     """Get a lottery event by ID"""
     result = await LotteryBusiness.get_lottery_event(conn, event_id)
+    return to_json_response(SingleResponse(result=result))
+
+
+@router.put("/events/{event_id}", response_model=SingleResponse[LotteryEvent],
+           responses={
+               404: {'model': ExceptionResponse},
+               400: {'model': ExceptionResponse, 'description': 'Bad Request - Cannot update drawn events'}
+           })
+async def update_lottery_event(
+        event_id: str,
+        request: LotteryEventUpdate,
+        conn=Depends(get_db_connection)
+):
+    """Update a lottery event. Cannot update events that have already been drawn."""
+    result = await LotteryBusiness.update_lottery_event(conn, event_id, request)
     return to_json_response(SingleResponse(result=result))
 
 

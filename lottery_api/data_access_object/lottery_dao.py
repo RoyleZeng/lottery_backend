@@ -55,6 +55,58 @@ class LotteryDAO:
         return await Database.fetchrow(conn, query, event_id, status)
 
     @staticmethod
+    async def update_lottery_event(conn, event_id, **kwargs):
+        """Update lottery event with provided fields"""
+        # Build dynamic query based on provided fields
+        set_clauses = []
+        params = []
+        param_count = 1
+        
+        # Add event_id as first parameter
+        params.append(event_id)
+        param_count += 1
+        
+        # Build SET clauses for provided fields
+        if 'academic_year_term' in kwargs and kwargs['academic_year_term'] is not None:
+            set_clauses.append(f"academic_year_term = ${param_count}")
+            params.append(kwargs['academic_year_term'])
+            param_count += 1
+            
+        if 'name' in kwargs and kwargs['name'] is not None:
+            set_clauses.append(f"name = ${param_count}")
+            params.append(kwargs['name'])
+            param_count += 1
+            
+        if 'description' in kwargs and kwargs['description'] is not None:
+            set_clauses.append(f"description = ${param_count}")
+            params.append(kwargs['description'])
+            param_count += 1
+            
+        if 'event_date' in kwargs and kwargs['event_date'] is not None:
+            set_clauses.append(f"event_date = ${param_count}")
+            params.append(kwargs['event_date'])
+            param_count += 1
+            
+        if 'type' in kwargs and kwargs['type'] is not None:
+            set_clauses.append(f"type = ${param_count}")
+            params.append(kwargs['type'])
+            param_count += 1
+        
+        # If no fields to update, return None
+        if not set_clauses:
+            return None
+        
+        # Build complete query
+        query = f"""
+        UPDATE lottery_events
+        SET {', '.join(set_clauses)}
+        WHERE id = $1 AND is_deleted = FALSE
+        RETURNING id, academic_year_term, name, description, event_date, type, status, is_deleted, created_at
+        """
+        
+        return await Database.fetchrow(conn, query, *params)
+
+    @staticmethod
     async def get_lottery_events(conn, limit=100, offset=0, event_type=None):
         """Get all lottery events with pagination (excluding soft deleted)"""
         if event_type:
@@ -138,8 +190,56 @@ class LotteryDAO:
         return result
 
     @staticmethod
+    async def get_existing_participants_by_student_ids(conn, event_id, student_ids):
+        """Get existing participants by student IDs for a specific event"""
+        if not student_ids:
+            return {}
+        
+        # Build query with IN clause
+        placeholders = ','.join([f'${i+2}' for i in range(len(student_ids))])
+        query = f"""
+        SELECT id, event_id, meta, created_at
+        FROM lottery_participants
+        WHERE event_id = $1 
+        AND meta->'student_info'->>'id' IN ({placeholders})
+        """
+        
+        params = [event_id] + student_ids
+        rows = await Database.fetch(conn, query, *params)
+        
+        # Create a mapping of student_id -> participant record
+        existing_participants = {}
+        for row in rows:
+            meta = LotteryDAO._parse_meta(row['meta'])
+            student_info = meta.get('student_info', {})
+            student_id = student_info.get('id', '')
+            if student_id:
+                existing_participants[student_id] = {
+                    'id': row['id'],
+                    'event_id': row['event_id'],
+                    'meta': meta,
+                    'created_at': row['created_at']
+                }
+        
+        return existing_participants
+
+    @staticmethod
+    async def update_participant(conn, participant_id, meta_data):
+        """Update an existing participant's meta data"""
+        query = """
+        UPDATE lottery_participants
+        SET meta = $2
+        WHERE id = $1
+        RETURNING id, event_id, meta, created_at
+        """
+        result = await Database.fetchrow(conn, query, participant_id, json.dumps(meta_data))
+        if result:
+            result['meta'] = LotteryDAO._parse_meta(result['meta'])
+        return result
+
+    @staticmethod
     async def add_participants_batch(conn, event_id, participants_data, event_type="general"):
-        """Batch add participants to a lottery event with Oracle metadata lookup"""
+        """Batch add participants to a lottery event with Oracle metadata lookup and duplicate prevention"""
         # Check if Oracle is available and needed
         # For final_teaching events, skip Oracle lookup as frontend provides complete data
         oracle_available = LotteryDAO._is_oracle_available() and event_type != "final_teaching"
@@ -152,8 +252,12 @@ class LotteryDAO:
             # Get all student info from Oracle in one batch
             oracle_students = OracleDatabase.get_students_batch(student_ids)
         
-        # Prepare batch insert data
-        batch_data = []
+        # Get existing participants to check for duplicates
+        existing_participants = await LotteryDAO.get_existing_participants_by_student_ids(conn, event_id, student_ids)
+        
+        # Separate data for insert vs update
+        insert_data = []
+        update_data = []
         skipped_students = []
         
         for participant_data in participants_data:
@@ -216,35 +320,48 @@ class LotteryDAO:
                     "valid_surveys": valid_surveys_stored
                 }
             
-            batch_data.append((event_id, json.dumps(meta)))
+            # Check if student already exists - if yes, prepare for update; if no, prepare for insert
+            if student_id in existing_participants:
+                existing_participant = existing_participants[student_id]
+                update_data.append((existing_participant['id'], meta))
+            else:
+                insert_data.append((event_id, json.dumps(meta)))
         
-        # Batch insert into database
-        if batch_data:
+        # Process updates and inserts
+        results = []
+        updated_count = 0
+        inserted_count = 0
+        
+        # Update existing participants
+        if update_data:
+            for participant_id, meta_data in update_data:
+                result = await LotteryDAO.update_participant(conn, participant_id, meta_data)
+                if result:
+                    results.append(result)
+                    updated_count += 1
+        
+        # Insert new participants
+        if insert_data:
             query = """
             INSERT INTO lottery_participants (event_id, meta)
             VALUES ($1, $2)
             RETURNING id, event_id, meta, created_at
             """
-            results = []
-            for event_id_val, meta_json in batch_data:
+            for event_id_val, meta_json in insert_data:
                 result = await Database.fetchrow(conn, query, event_id_val, meta_json)
                 if result:
                     result['meta'] = LotteryDAO._parse_meta(result['meta'])
                     results.append(result)
-            
-            return {
-                "imported": results,
-                "skipped": skipped_students,
-                "total_imported": len(results),
-                "total_skipped": len(skipped_students)
-            }
-        else:
-            return {
-                "imported": [],
-                "skipped": skipped_students,
-                "total_imported": 0,
-                "total_skipped": len(skipped_students)
-            }
+                    inserted_count += 1
+        
+        return {
+            "imported": results,
+            "skipped": skipped_students,
+            "total_imported": len(results),
+            "total_skipped": len(skipped_students),
+            "inserted_count": inserted_count,
+            "updated_count": updated_count
+        }
 
     @staticmethod
     async def get_participants(conn, event_id, limit=1000, offset=0):

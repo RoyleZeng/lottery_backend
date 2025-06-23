@@ -34,6 +34,15 @@ class LotteryEventCreate(LotteryEventBase):
     pass
 
 
+class LotteryEventUpdate(BaseModel):
+    """Schema for updating lottery event - all fields are optional"""
+    academic_year_term: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    event_date: Optional[datetime] = None
+    type: Optional[LotteryEventType] = None
+
+
 class LotteryEvent(LotteryEventBase):
     id: str
     status: str
@@ -238,6 +247,8 @@ class ImportStudentsResponse(BaseModel):
     skipped: List[SkippedStudent]
     total_imported: int
     total_skipped: int
+    inserted_count: int = 0  # 新增的參與者數量
+    updated_count: int = 0   # 更新的參與者數量
 
 
 class SoftDeleteEventResponse(BaseModel):
