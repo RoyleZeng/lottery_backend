@@ -635,8 +635,20 @@ class LotteryDAO:
             teaching_comments = meta.get('teaching_comments', {})
             oracle_info = meta.get('oracle_info', {})
             
+            # Prioritize Oracle name data over student_info name
+            display_name = (
+                oracle_info.get('name') or 
+                oracle_info.get('chinese_name') or 
+                oracle_info.get('english_name') or 
+                student_info.get('name', '')
+            )
+            
             # Check eligibility based on event type
             is_eligible = True
+            
+            # Check if participant has a valid name - skip if no name available
+            if not display_name or display_name.strip() == '':
+                is_eligible = False
             
             if event and event['type'] == 'final_teaching':
                 # For final_teaching events, both surveys_completed and valid_surveys must be "Y"
@@ -649,14 +661,6 @@ class LotteryDAO:
             # Only include eligible participants in the drawing pool
             if not is_eligible:
                 continue
-            
-            # Prioritize Oracle name data over student_info name
-            display_name = (
-                oracle_info.get('name') or 
-                oracle_info.get('chinese_name') or 
-                oracle_info.get('english_name') or 
-                student_info.get('name', '')
-            )
             
             participant = {
                 'participant_id': row['participant_id'],
