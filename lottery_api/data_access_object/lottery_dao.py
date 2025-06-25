@@ -264,14 +264,9 @@ class LotteryDAO:
             student_id = participant_data.get('id', '')
             oracle_student_info = oracle_students.get(student_id) if oracle_available else None
             
-            # If Oracle is available but student not found, skip this participant
-            # This only applies to general events, not final_teaching
-            if oracle_available and not oracle_student_info:
-                skipped_students.append({
-                    "student_id": student_id,
-                    "reason": "Student not found in Oracle database"
-                })
-                continue
+            # For general events: If Oracle is available but student not found, 
+            # still import the student but without Oracle data supplement
+            # (removed the skip logic as requested by user)
             
             # Prepare meta data (with or without Oracle info)
             meta = {
@@ -306,6 +301,13 @@ class LotteryDAO:
             
             # Add teaching comments if available
             if any(key in participant_data for key in ['required_surveys', 'completed_surveys', 'surveys_completed', 'valid_surveys']):
+                # Handle enum values for surveys_completed
+                surveys_completed_value = participant_data.get('surveys_completed')
+                if hasattr(surveys_completed_value, 'value'):  # It's an enum
+                    surveys_completed_stored = surveys_completed_value.value
+                else:
+                    surveys_completed_stored = surveys_completed_value
+                
                 # Handle enum values for valid_surveys
                 valid_surveys_value = participant_data.get('valid_surveys')
                 if hasattr(valid_surveys_value, 'value'):  # It's an enum
@@ -316,7 +318,7 @@ class LotteryDAO:
                 meta["teaching_comments"] = {
                     "required_surveys": participant_data.get('required_surveys', 0),
                     "completed_surveys": participant_data.get('completed_surveys', 0),
-                    "surveys_completed": participant_data.get('surveys_completed', False),
+                    "surveys_completed": surveys_completed_stored,
                     "valid_surveys": valid_surveys_stored
                 }
             
@@ -613,7 +615,10 @@ class LotteryDAO:
 
     @staticmethod
     async def get_non_winners(conn, event_id):
-        """Get participants who haven't won any prize yet"""
+        """Get participants who haven't won any prize yet and are eligible for drawing"""
+        # First get the event type to determine eligibility criteria
+        event = await LotteryDAO.get_lottery_event_by_id(conn, event_id)
+        
         query = """
         SELECT p.id as participant_id, p.event_id, p.meta, p.created_at
         FROM lottery_participants p
@@ -622,13 +627,28 @@ class LotteryDAO:
         """
         rows = await Database.fetch(conn, query, event_id)
         
-        # Transform the data to flatten meta information
+        # Transform the data to flatten meta information and filter for eligibility
         participants = []
         for row in rows:
             meta = LotteryDAO._parse_meta(row['meta'])
             student_info = meta.get('student_info', {})
             teaching_comments = meta.get('teaching_comments', {})
             oracle_info = meta.get('oracle_info', {})
+            
+            # Check eligibility based on event type
+            is_eligible = True
+            
+            if event and event['type'] == 'final_teaching':
+                # For final_teaching events, both surveys_completed and valid_surveys must be "Y"
+                surveys_completed = teaching_comments.get('surveys_completed')
+                valid_surveys = teaching_comments.get('valid_surveys')
+                
+                if surveys_completed != "Y" or valid_surveys != "Y":
+                    is_eligible = False
+            
+            # Only include eligible participants in the drawing pool
+            if not is_eligible:
+                continue
             
             # Prioritize Oracle name data over student_info name
             display_name = (

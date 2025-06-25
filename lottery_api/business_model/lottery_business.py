@@ -6,7 +6,7 @@ from typing import Dict, List, Any
 
 from lottery_api.data_access_object.lottery_dao import LotteryDAO
 from lottery_api.lib.base_exception import ResourceNotFoundException, ParameterViolationException
-from lottery_api.schema.lottery import ValidSurveys, StudentType
+from lottery_api.schema.lottery import ValidSurveys, SurveysCompleted, StudentType
 
 
 class LotteryBusiness:
@@ -77,21 +77,36 @@ class LotteryBusiness:
         # Pre-filter students for final_teaching events
         filtered_students = []
         skipped_students = []
+        total_uploaded = len(students_data)
         
         for student_data in students_data:
-            # For final_teaching events, check valid_surveys
+            # For final_teaching events, check both surveys_completed and valid_surveys
             if event['type'] == 'final_teaching':
+                # Check surveys_completed
+                surveys_completed = student_data.get('surveys_completed')
+                if isinstance(surveys_completed, SurveysCompleted):
+                    surveys_completed_value = surveys_completed.value
+                else:
+                    surveys_completed_value = surveys_completed
+                
+                # Check valid_surveys
                 valid_surveys = student_data.get('valid_surveys')
-                # Handle both enum and string values
                 if isinstance(valid_surveys, ValidSurveys):
                     valid_surveys_value = valid_surveys.value
                 else:
                     valid_surveys_value = valid_surveys
                 
-                if valid_surveys_value != ValidSurveys.YES.value:
+                # Both must be "Y" to be eligible for drawing
+                if surveys_completed_value != SurveysCompleted.YES.value or valid_surveys_value != ValidSurveys.YES.value:
+                    skip_reason = []
+                    if surveys_completed_value != SurveysCompleted.YES.value:
+                        skip_reason.append("surveys_completed is not Y")
+                    if valid_surveys_value != ValidSurveys.YES.value:
+                        skip_reason.append("valid_surveys is not Y")
+                    
                     skipped_students.append({
                         "student_id": student_data.get('id', ''),
-                        "reason": "valid_surveys is not Y"
+                        "reason": " and ".join(skip_reason)
                     })
                     continue
             
@@ -115,18 +130,29 @@ class LotteryBusiness:
             # Combine skipped students
             all_skipped = skipped_students + result["skipped"]
             
+            # Calculate eligible count (imported students who can participate in drawing)
+            total_eligible = len(all_imported)
+            
             return {
                 "imported": all_imported,
                 "skipped": all_skipped,
+                "total_uploaded": total_uploaded,
                 "total_imported": len(all_imported),
-                "total_skipped": len(all_skipped)
+                "total_eligible": total_eligible,
+                "total_skipped": len(all_skipped),
+                "inserted_count": result.get("inserted_count", 0),
+                "updated_count": result.get("updated_count", 0)
             }
         else:
             return {
                 "imported": [],
                 "skipped": skipped_students,
+                "total_uploaded": total_uploaded,
                 "total_imported": 0,
-                "total_skipped": len(skipped_students)
+                "total_eligible": 0,
+                "total_skipped": len(skipped_students),
+                "inserted_count": 0,
+                "updated_count": 0
             }
 
     @staticmethod

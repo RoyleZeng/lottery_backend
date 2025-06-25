@@ -16,6 +16,12 @@ class ValidSurveys(str, Enum):
     NO = "N"   # 無效問卷
 
 
+class SurveysCompleted(str, Enum):
+    """Enum for surveys completed status"""
+    YES = "Y"  # 已完成問卷
+    NO = "N"   # 未完成問卷
+
+
 class StudentType(str, Enum):
     """Enum for student type (corresponds to Oracle STUD_EXTRA)"""
     FOREIGN = "Y"  # 外籍生
@@ -64,7 +70,7 @@ class TeachingCommentBase(BaseModel):
     """Base model for teaching comments"""
     required_surveys: Optional[int] = None
     completed_surveys: Optional[int] = None
-    surveys_completed: Optional[bool] = None
+    surveys_completed: Optional[SurveysCompleted] = None  # Y=已完成問卷, N=未完成問卷
     valid_surveys: Optional[ValidSurveys] = None  # Y=有效問卷, N=無效問卷
 
 
@@ -123,7 +129,7 @@ class FinalParticipant(Participant):
     # Teaching comments fields
     required_surveys: Optional[int] = None
     completed_surveys: Optional[int] = None
-    surveys_completed: Optional[bool] = None
+    surveys_completed: Optional[SurveysCompleted] = None  # Y=已完成問卷, N=未完成問卷
     valid_surveys: Optional[ValidSurveys] = None  # Y=有效問卷, N=無效問卷
 
     model_config = ConfigDict(from_attributes=True)
@@ -184,7 +190,7 @@ class Winner(BaseModel):
     # Teaching comments fields
     required_surveys: Optional[int] = None
     completed_surveys: Optional[int] = None
-    surveys_completed: Optional[bool] = None
+    surveys_completed: Optional[SurveysCompleted] = None  # Y=已完成問卷, N=未完成問卷
     valid_surveys: Optional[ValidSurveys] = None  # Y=有效問卷, N=無效問卷
 
     model_config = ConfigDict(from_attributes=True)
@@ -245,8 +251,10 @@ class ImportStudentsResponse(BaseModel):
     """Response model for student import operation"""
     imported: List[ImportedStudent]
     skipped: List[SkippedStudent]
-    total_imported: int
-    total_skipped: int
+    total_uploaded: int = 0  # 總共上傳的人數
+    total_imported: int  # 匯入成功的人數（舊欄位，保持向後相容）
+    total_eligible: int = 0  # 匯入成待抽名單中的人數
+    total_skipped: int  # 跳過的人數
     inserted_count: int = 0  # 新增的參與者數量
     updated_count: int = 0   # 更新的參與者數量
 
