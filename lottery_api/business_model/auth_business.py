@@ -10,6 +10,9 @@ from lottery_api.schema.auth import RegisterRequest, LoginRequest
 class AuthBusiness:
     """Business logic for authentication operations"""
     
+    # 20 minutes in seconds
+    TOKEN_EXPIRY_TIME = 20 * 60  # 1200 seconds
+    
     @staticmethod
     async def register_user(conn, request: RegisterRequest) -> Dict[str, Any]:
         """Register a new consumer account"""
@@ -70,13 +73,15 @@ class AuthBusiness:
             )
 
         # Convert UUID to string before serializing to JSON
+        # Set token expiry to 20 minutes
         access_token = JwtToken(key=JWTKey()).generate_token(
             claims={
                 "user_id": str(user["user_id"]),  # Convert UUID to string
                 "username": user["name"],
                 "roles": user["role"],
                 "attributes": [],
-            })
+            },
+            expired_time=AuthBusiness.TOKEN_EXPIRY_TIME)
 
         return {
             "access_token": access_token,

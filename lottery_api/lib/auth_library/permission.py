@@ -108,7 +108,7 @@ class AgentAuth(Auth):
 
 def get_auth_from_token(token: str) -> Tuple[User, Permission]:
     if JwtToken.get_claims(token):
-        claims = JwtToken(JWTKey(jwt_private_key=None, jwt_public_key=_settings.jwt_public_key)).get_claims(token=token)
+        claims = JwtToken(JWTKey(jwt_private_key=None, jwt_public_key=_settings.jwt_public_key)).get_claims_and_verify_token(token)
         user = get_user_from_hyena_token_claims(claims)
         permission = Permission(key='Wild', scope=Scope.ALL)
         return user, permission

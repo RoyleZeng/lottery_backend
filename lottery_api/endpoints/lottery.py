@@ -1,9 +1,11 @@
 import os
 from typing import List, Optional, Union
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, status, File, UploadFile, Query, HTTPException, Path
 from fastapi.responses import FileResponse
 from lottery_api.data_access_object.db import get_db_connection
 from lottery_api.business_model.lottery_business import LotteryBusiness
+from lottery_api.lib.auth_library.permission import depend_auth, Auth
 from lottery_api.lib.response import ExceptionResponse, SingleResponse, ListResponse, to_json_response
 from lottery_api.schema.lottery import (
     LotteryEventCreate, LotteryEvent, LotteryEventType, LotteryEventUpdate,
@@ -20,6 +22,7 @@ router = APIRouter(prefix="/lottery", tags=["lottery"])
 @router.post("/events", response_model=SingleResponse[LotteryEvent], status_code=status.HTTP_201_CREATED)
 async def create_lottery_event(
         request: LotteryEventCreate,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Create a new lottery event"""
@@ -32,6 +35,7 @@ async def get_lottery_events(
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         event_type: Optional[LotteryEventType] = None,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Get all lottery events with pagination"""
@@ -43,6 +47,7 @@ async def get_lottery_events(
             responses={404: {'model': ExceptionResponse}})
 async def get_lottery_event(
         event_id: str,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Get a lottery event by ID"""
@@ -58,6 +63,7 @@ async def get_lottery_event(
 async def update_lottery_event(
         event_id: str,
         request: LotteryEventUpdate,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Update a lottery event. Cannot update events that have already been drawn."""
@@ -71,6 +77,7 @@ async def update_lottery_event(
 async def import_students_and_add_participants(
         event_id: str,
         request: Union[StudentsImport, FinalTeachingStudentsImport],
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Import students and add them as participants to a lottery event.
@@ -90,6 +97,7 @@ async def get_participants(
         event_id: str,
         limit: int = Query(1000, ge=1, le=10000),
         offset: int = Query(0, ge=0),
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Get participants for a lottery event"""
@@ -102,6 +110,7 @@ async def get_participants(
 async def set_prizes(
         event_id: str,
         request: PrizeSettings,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Set prizes for a lottery event"""
@@ -113,6 +122,7 @@ async def set_prizes(
             responses={404: {'model': ExceptionResponse}})
 async def get_prizes(
         event_id: str,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Get prizes for a lottery event"""
@@ -124,6 +134,7 @@ async def get_prizes(
 async def update_prize(
         prize_id: int,
         request: PrizeUpdate,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Update a prize"""
@@ -134,6 +145,7 @@ async def update_prize(
 @router.delete("/prizes/{prize_id}", responses={404: {'model': ExceptionResponse}})
 async def delete_prize(
         prize_id: int,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Delete a prize"""
@@ -149,6 +161,7 @@ async def delete_prize(
              })
 async def draw_winners(
         event_id: str = Path(),
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Draw winners for a lottery event. An event can only be drawn once."""
@@ -160,6 +173,7 @@ async def draw_winners(
             responses={404: {'model': ExceptionResponse}})
 async def get_winners(
         event_id: str,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Get winners for a lottery event"""
@@ -175,6 +189,7 @@ async def get_winners(
                })
 async def reset_drawing(
         event_id: str = Path(),
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Reset a lottery drawing by deleting all winners and setting event status back to pending, allowing re-drawing"""
@@ -186,6 +201,7 @@ async def reset_drawing(
             responses={404: {'model': ExceptionResponse}})
 async def export_winners(
         event_id: str,
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
     """Export winners for a lottery event to Excel and return the file directly"""
@@ -200,24 +216,49 @@ async def export_winners(
             detail="Export file not found"
         )
     
+    # Extract just the filename without path for display
+    display_filename = filename
+    # If it's a complex filename with timestamp, extract just the meaningful part
+    if "_" in display_filename:
+        # Keep the original filename as is for Chinese support
+        display_filename = filename
+    
+    # URL encode the filename to handle Chinese characters
+    encoded_filename = quote(display_filename)
+    
     return FileResponse(
-        file_path, 
-        filename=filename,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        path=file_path,
+        filename=display_filename,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
     )
 
 
 @router.get("/export/{filename}")
-async def download_export(filename: str):
-    """Download an exported winners file"""
+async def download_export(
+        filename: str,
+        auth: Auth = depend_auth()
+):
+    """Download an export file"""
     file_path = os.path.join("exports", filename)
     if not os.path.exists(file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Export file not found"
+            detail="File not found"
         )
-    return FileResponse(file_path, filename=filename,
-                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    
+    # URL encode the filename to handle Chinese characters
+    encoded_filename = quote(filename)
+    
+    return FileResponse(
+        path=file_path, 
+        filename=filename,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
+    )
 
 
 @router.delete("/participants/{participant_id}", response_model=SingleResponse[DeleteParticipantResponse],
@@ -227,9 +268,10 @@ async def download_export(filename: str):
                })
 async def delete_participant(
         participant_id: int = Path(),
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
-    """Delete a specific participant. Cannot delete participants from events that have already been drawn."""
+    """Delete a participant from a lottery event. Cannot delete from events that have already been drawn."""
     result = await LotteryBusiness.delete_participant(conn, participant_id)
     return to_json_response(SingleResponse(result=result))
 
@@ -241,9 +283,10 @@ async def delete_participant(
                })
 async def delete_all_participants(
         event_id: str = Path(),
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
-    """Delete all participants for an event. Cannot delete participants from events that have already been drawn."""
+    """Delete all participants from a lottery event. Cannot delete from events that have already been drawn."""
     result = await LotteryBusiness.delete_all_participants(conn, event_id)
     return to_json_response(SingleResponse(result=result))
 
@@ -252,39 +295,40 @@ async def delete_all_participants(
                responses={404: {'model': ExceptionResponse}})
 async def soft_delete_event(
         event_id: str = Path(),
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
-    """軟刪除抽獎活動（設置 is_deleted 為 true，不會真正從資料庫刪除）"""
+    """
+    Soft delete a lottery event by setting deleted=true. 
+    The event will be hidden from normal queries but data is preserved.
+    """
     result = await LotteryBusiness.soft_delete_event(conn, event_id)
-    return to_json_response(SingleResponse(result={
-        "event_id": result["id"],
-        "message": f"抽獎活動「{result['name']}」已被軟刪除",
-        "is_deleted": result["is_deleted"]
-    }))
+    return to_json_response(SingleResponse(result=result))
 
 
 @router.put("/events/{event_id}/restore", response_model=SingleResponse[SoftDeleteEventResponse],
            responses={404: {'model': ExceptionResponse}})
 async def restore_event(
         event_id: str = Path(),
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
-    """恢復被軟刪除的抽獎活動"""
+    """
+    Restore a soft-deleted lottery event by setting deleted=false.
+    The event will become visible in normal queries again.
+    """
     result = await LotteryBusiness.restore_event(conn, event_id)
-    return to_json_response(SingleResponse(result={
-        "event_id": result["id"],
-        "message": f"抽獎活動「{result['name']}」已恢復",
-        "is_deleted": result["is_deleted"]
-    }))
+    return to_json_response(SingleResponse(result=result))
 
 
 @router.get("/deleted-events", response_model=ListResponse[LotteryEvent])
 async def get_deleted_events(
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
+        auth: Auth = depend_auth(),
         conn=Depends(get_db_connection)
 ):
-    """取得所有被軟刪除的抽獎活動"""
+    """Get all soft-deleted lottery events with pagination"""
     result = await LotteryBusiness.get_deleted_events(conn, limit, offset)
     return to_json_response(ListResponse(result=result))
  

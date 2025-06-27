@@ -3,6 +3,7 @@ from typing import Dict, Any
 
 from lottery_api.data_access_object.db import get_db_connection
 from lottery_api.business_model.email_business import EmailBusiness
+from lottery_api.lib.auth_library.permission import depend_auth, Auth
 from lottery_api.lib.response import ExceptionResponse, SingleResponse, to_json_response
 from lottery_api.schema.email import (
     SendEmailRequest, SendEmailResponse, BulkEmailRequest,
@@ -14,7 +15,8 @@ router = APIRouter(prefix="/email", tags=["email"])
 
 @router.post("/send", response_model=SingleResponse[SendEmailResponse], status_code=status.HTTP_200_OK)
 async def send_email(
-    request: SendEmailRequest
+        request: SendEmailRequest,
+        auth: Auth = depend_auth(),
 ):
     """發送郵件給指定收件人"""
     result = await EmailBusiness.send_email(
@@ -28,7 +30,8 @@ async def send_email(
 
 @router.post("/send-bulk", response_model=SingleResponse[SendEmailResponse], status_code=status.HTTP_200_OK)
 async def send_bulk_email(
-    request: BulkEmailRequest
+        request: BulkEmailRequest,
+        auth: Auth = depend_auth(),
 ):
     """批量發送郵件給多個收件人"""
     result = await EmailBusiness.send_bulk_email(
@@ -48,9 +51,10 @@ async def send_bulk_email(
                  400: {'model': ExceptionResponse}
              })
 async def send_winners_notification(
-    event_id: str,
-    request: SendWinnersEmailRequest,
-    conn=Depends(get_db_connection)
+        event_id: str,
+        request: SendWinnersEmailRequest,
+        auth: Auth = depend_auth(),
+        conn=Depends(get_db_connection)
 ):
     """發送中獎通知郵件給抽獎活動的中獎者"""
     result = await EmailBusiness.send_winners_notification(
@@ -67,7 +71,8 @@ async def send_winners_notification(
 
 @router.post("/test-connection", response_model=SingleResponse[Dict[str, Any]], status_code=status.HTTP_200_OK)
 async def test_email_connection(
-    email_config: EmailConfig
+        email_config: EmailConfig,
+        auth: Auth = depend_auth(),
 ):
     """測試郵件伺服器連接"""
     result = EmailBusiness.test_email_connection(email_config)
@@ -76,7 +81,7 @@ async def test_email_connection(
 
 @router.get("/template-variables", response_model=SingleResponse[Dict[str, Any]])
 async def get_template_variables():
-    """取得郵件模板可用的變數列表"""
+    """取得郵件模板可用的變數列表 - 此endpoint不需要認證"""
     variables = {
         "available_variables": {
             "winner_name": {
@@ -186,7 +191,7 @@ async def get_template_variables():
 
 @router.get("/smtp-settings-example", response_model=SingleResponse[Dict[str, Any]])
 async def get_smtp_settings_example():
-    """取得常見郵件服務商的 SMTP 設定範例"""
+    """取得常見郵件服務商的 SMTP 設定範例 - 此endpoint不需要認證"""
     examples = {
         "nchu_secure": {
             "smtp_server": "dragon.nchu.edu.tw",
@@ -236,9 +241,10 @@ async def get_smtp_settings_example():
                  400: {'model': ExceptionResponse}
              })
 async def test_winners_notification(
-    event_id: str,
-    request: TestWinnersEmailRequest,
-    conn=Depends(get_db_connection)
+        event_id: str,
+        request: TestWinnersEmailRequest,
+        auth: Auth = depend_auth(),
+        conn=Depends(get_db_connection)
 ):
     """測試中獎通知郵件功能 - 發送給指定的測試收件人而非實際中獎者"""
     result = await EmailBusiness.test_winners_notification(
@@ -251,4 +257,4 @@ async def test_winners_notification(
         email_template=request.email_template,
         html_template=request.html_template
     )
-    return to_json_response(SingleResponse(result=result)) 
+    return to_json_response(SingleResponse(result=result))
